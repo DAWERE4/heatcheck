@@ -1,0 +1,52 @@
+[
+  {
+    "id": "demo",
+    "name": "Ms. Johnson",
+    "note": "Composite demo resident, not a real person.",
+    "neighborhood": "Pittsburgh, Atlanta",
+    "address": "Pittsburgh neighborhood, Atlanta (demo)",
+    "lat": 33.7310,
+    "lon": -84.4030,
+    "language": "$RESIDENT_LANGUAGE|en",
+    "resident_phone": "$RESIDENT_PHONE",
+    "neighbor_name": "$NEIGHBOR_NAME|Denise (neighbor)",
+    "neighbor_phone": "$NEIGHBOR_PHONE",
+    "live": true
+  },
+  {
+    "id": "sample-1",
+    "name": "Mr. Alvarez",
+    "neighborhood": "Mechanicsville, Atlanta",
+    "address": "Mechanicsville, Atlanta (sample)",
+    "lat": 33.7370,
+    "lon": -84.3990,
+    "language": "es",
+    "sample": true,
+    "sample_temp_f": 84,
+    "sample_humidity": 55
+  },
+  {
+    "id": "sample-2",
+    "name": "Ms. Carter",
+    "neighborhood": "West End, Atlanta",
+    "address": "West End, Atlanta (sample)",
+    "lat": 33.7370,
+    "lon": -84.4130,
+    "language": "en",
+    "sample": true,
+    "sample_temp_f": 79,
+    "sample_humidity": 50
+  },
+  {
+    "id": "sample-3",
+    "name": "Mr. Nguyen",
+    "neighborhood": "Adair Park, Atlanta",
+    "address": "Adair Park, Atlanta (sample)",
+    "lat": 33.7280,
+    "lon": -84.4100,
+    "language": "en",
+    "sample": true,
+    "sample_temp_f": 76,
+    "sample_humidity": 45
+  }
+]

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Selena S. Butler Park cooling center",
+    "address": "98 William Holmes Borders Sr Dr NE, Atlanta, GA 30312",
+    "lat": 33.7585,
+    "lon": -84.3787,
+    "coords_note": "Approximate. Check on a map and fix before the demo.",
+    "hours": {
+      "mon": ["11:00", "18:00"],
+      "tue": ["11:00", "18:00"],
+      "wed": ["11:00", "18:00"],
+      "thu": ["11:00", "18:00"],
+      "fri": ["11:00", "18:00"]
+    },
+    "source": "City of Atlanta press release, June 30 2026: cooling center open Mon-Fri 11am-6pm until further notice, bottled water provided."
+  },
+  {
+    "name": "Your nearest Atlanta fire station",
+    "fallback": true,
+    "always_open": true,
+    "say": "Atlanta fire stations have served as hydration stations for water. If you feel confused or dizzy, or you stop sweating, call 9 1 1.",
+    "source": "City of Atlanta, July 2026: 30 fire stations serving as hydration stations."
+  }
+]

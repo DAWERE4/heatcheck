@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HeatCheck</title>
+<style>
+  :root {
+    --bg: #f6f3ee;
+    --card: #ffffff;
+    --ink: #1d1a17;
+    --muted: #6b645c;
+    --line: #e6e0d6;
+    --normal: #2f7d6d;
+    --caution: #b8901a;
+    --extreme-caution: #d86b17;
+    --danger: #cc3322;
+    --extreme-danger: #8e1b3a;
+    --good: #2f7d6d;
+    --alert: #cc3322;
+    --info: #6b645c;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 18px 28px; border-bottom: 1px solid var(--line); background: var(--card);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; margin-right: auto; }
+  .brand h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+  .brand h1 span { color: var(--danger); }
+  .brand p { margin: 0; color: var(--muted); font-size: 14px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); background: var(--bg); white-space: nowrap;
+  }
+  .badge.on { color: #fff; background: var(--good); border-color: var(--good); }
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px;
+    padding: 24px 28px 40px; max-width: 1280px; margin: 0 auto;
+  }
+  @media (max-width: 920px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 14px 16px; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .home { padding: 22px 24px; }
+  .home-top { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .home-top h2 { margin: 0; font-size: 24px; letter-spacing: -0.01em; }
+  .home-top .where { color: var(--muted); font-size: 14px; }
+  .pill {
+    margin-left: auto; font-weight: 700; font-size: 13px; padding: 7px 14px; border-radius: 999px;
+    background: var(--bg); border: 1px solid var(--line);
+  }
+  .pill.calling { background: #fff3e6; color: var(--extreme-caution); border-color: #f3c89c; animation: pulse 1.2s infinite; }
+  .pill.ok { background: #e8f3f0; color: var(--good); border-color: #b9dcd3; }
+  .pill.escalated { background: var(--danger); color: #fff; border-color: var(--danger); }
+  @keyframes pulse { 50% { opacity: .55; } }
+  .reason { margin: 8px 0 0; color: var(--muted); font-size: 14px; min-height: 20px; }
+
+  .reading { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; margin-top: 18px; }
+  @media (max-width: 620px) { .reading { grid-template-columns: 1fr; } }
+  .hi-box { border-radius: 12px; padding: 16px 22px; min-width: 210px; color: #fff; background: var(--normal); transition: background .4s; }
+  .hi-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; opacity: .9; }
+  .hi-box .num { font-size: 64px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .hi-box .cat { font-weight: 700; font-size: 16px; margin-top: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .spark { width: 100%; height: 120px; display: block; }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 14px; padding: 9px 14px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button.warn { background: var(--danger); color: #fff; border-color: var(--danger); }
+  button.goodb { background: var(--good); color: #fff; border-color: var(--good); }
+  .sim { display: none; margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: #fff7ee; border: 1px dashed #f0c08a; }
+  .sim p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+
+  .cool { margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: #eef5f3; border: 1px solid #cfe5df; }
+  .cool.closed { background: #fbefec; border-color: #f0c9c1; }
+  .cool h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .cool strong { font-size: 16px; }
+
+  h3.section { margin: 22px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  ol.events { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; }
+  ol.events li { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  ol.events li time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+  ol.events li.alert span { color: var(--alert); font-weight: 600; }
+  ol.events li.good span { color: var(--good); font-weight: 600; }
+  ol.events li.error span { color: var(--extreme-danger); }
+
+  aside { display: flex; flex-direction: column; gap: 22px; }
+  .panel { padding: 18px 18px; }
+  .panel h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .row .who { flex: 1; min-width: 0; }
+  .row .who b { display: block; font-size: 14px; }
+  .row .who small { color: var(--muted); }
+  .row .val { font-weight: 800; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .tag { font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; margin-left: 6px; }
+  .panel p { margin: 0; font-size: 14px; color: var(--muted); }
+  .panel p + p { margin-top: 8px; }
+  .setup { font-size: 13px; color: var(--muted); }
+  .setup code { background: var(--bg); padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Heat<span>Check</span></h1>
+    <p>Indoor heat check-ins for Atlanta seniors who can't run AC</p>
+  </div>
+  <span class="badge" id="mode">…</span>
+  <span class="badge" id="push">…</span>
+  <span class="badge" id="threshold">…</span>
+</header>
+
+<main>
+  <section class="card home" id="home">
+    <div class="home-top">
+      <div>
+        <h2 id="name">Loading…</h2>
+        <div class="where" id="where"></div>
+      </div>
+      <span class="pill" id="status">…</span>
+    </div>
+    <p class="reason" id="reason"></p>
+
+    <div class="reading">
+      <div class="hi-box" id="hibox">
+        <div class="label">Indoor heat index</div>
+        <div class="num" id="hi">--</div>
+        <div class="cat" id="cat">Waiting for sensor</div>
+      </div>
+      <div>
+        <svg class="spark" id="spark" viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="Heat index history"></svg>
+        <div class="sub" id="sub">No readings yet. Open the virtual sensor or plug in the ESP32.</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="btn-checkin">Start check-in now</button>
+      <button id="btn-reset">Reset</button>
+      <button id="btn-sensor">Open virtual sensor</button>
+    </div>
+
+    <div class="sim" id="sim">
+      <p>Simulated call in progress. Pick what the resident does:</p>
+      <div class="actions" style="margin-top:0">
+        <button class="goodb" data-outcome="ok">Pressed 1: "I'm OK"</button>
+        <button class="warn" data-outcome="help">Pressed 2: "I need help"</button>
+        <button data-outcome="no_answer">No answer</button>
+      </div>
+    </div>
+
+    <div class="cool" id="cool">
+      <h3>Nearest cooling spot</h3>
+      <div id="cool-body">…</div>
+    </div>
+
+    <h3 class="section">Timeline</h3>
+    <ol class="events" id="events"></ol>
+  </section>
+
+  <aside>
+    <section class="card panel">
+      <h3>Other homes <span class="tag">sample data</span></h3>
+      <div id="others"><p>None.</p></div>
+    </section>
+    <section class="card panel">
+      <h3>Why people ration AC</h3>
+      <p>Half of Atlanta's low-income households spend more than 10.2% of their income on energy, and a quarter spend over 18.2%. The national average is 3.5% (ACEEE).</p>
+      <p>Point residents who ration their AC to Georgia Power's income-qualified EASE efficiency program.</p>
+    </section>
+    <section class="card panel setup" id="setup" hidden></section>
+  </aside>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const DEMO_ID = new URLSearchParams(location.search).get("home") || "demo";
+let state = null;
+
+function esc(text) {
+  const div = document.createElement("div");
+  div.textContent = text == null ? "" : String(text);
+  return div.innerHTML;
+}
+function ago(ts) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  return Math.round(s / 3600) + " h ago";
+}
+function clock(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+function color(css) {
+  return getComputedStyle(document.documentElement).getPropertyValue("--" + (css || "normal")).trim();
+}
+
+function spark(history, threshold) {
+  const svg = $("spark");
+  if (!history.length) { svg.innerHTML = ""; return; }
+  const W = 600, H = 120, pad = 8;
+  const lo = Math.min(...history, threshold - 12);
+  const hi = Math.max(...history, threshold + 12);
+  const x = (i) => history.length === 1 ? W : pad + (i * (W - pad * 2)) / (history.length - 1);
+  const y = (v) => H - pad - ((v - lo) * (H - pad * 2)) / (hi - lo || 1);
+  const pts = history.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const ty = y(threshold).toFixed(1);
+  const last = history[history.length - 1];
+  svg.innerHTML = `
+    <line x1="0" x2="${W}" y1="${ty}" y2="${ty}" stroke="${color("danger")}" stroke-width="1.5" stroke-dasharray="6 6" opacity=".6"/>
+    <text x="${W - 4}" y="${Number(ty) - 6}" text-anchor="end" font-size="12" fill="${color("danger")}">alert at ${threshold}°F</text>
+    <polyline points="${pts}" fill="none" stroke="${color(last >= threshold ? "danger" : "normal")}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+}
+
+function render() {
+  if (!state) return;
+  const home = state.homes.find((h) => h.id === DEMO_ID) || state.homes.find((h) => !h.sample);
+  const others = state.homes.filter((h) => h !== home);
+
+  $("mode").textContent = state.mode === "live" ? "Live phone calls" : "Simulated calls";
+  $("mode").classList.toggle("on", state.mode === "live");
+  $("push").textContent = state.push_alerts ? "Push alerts on" : "Push alerts off";
+  $("push").classList.toggle("on", state.push_alerts);
+  $("threshold").textContent = `Alert at heat index ${state.threshold_f}°F`;
+
+  if (!home) return;
+  $("name").textContent = home.name;
+  $("where").textContent = [home.neighborhood, home.resident_phone && ("phone " + home.resident_phone), home.language === "es" ? "calls in Spanish" : ""].filter(Boolean).join(" · ");
+  const pill = $("status");
+  pill.textContent = home.status_label;
+  pill.className = "pill " + home.status;
+  $("reason").textContent = home.status === "normal" ? "" : `${home.reason} · ${ago(home.status_since)}`;
+
+  const last = home.last;
+  if (last) {
+    $("hi").textContent = Math.round(last.hi) + "°";
+    $("cat").textContent = last.category;
+    $("hibox").style.background = color(last.css);
+    const src = { esp32: "ESP32 sensor", virtual: "virtual sensor", sensor: "sensor" }[home.last_source] || home.last_source;
+    $("sub").textContent = `Air ${last.temp_f}°F · humidity ${Math.round(last.humidity)}% · from ${src} · ${ago(last.t)}`;
+  }
+  spark(home.history, state.threshold_f);
+
+  $("sim").style.display = home.status === "calling" && !home.calls_live ? "block" : "none";
+
+  const c = home.cooling;
+  $("cool").classList.toggle("closed", !c.found);
+  $("cool-body").innerHTML = c.found
+    ? `<strong>${esc(c.name)}</strong><br>${esc(c.address)} · ${esc(c.miles)} mi · ${esc(c.hours)}`
+    : `<strong>No cooling center is open right now.</strong><br>Closed: ${esc(c.closed)}. Fallback: ${esc(c.name)}.`;
+
+  $("events").innerHTML = home.events.length
+    ? home.events.map((e) => `<li class="${esc(e.kind)}"><time>${esc(clock(e.t))}</time><span>${esc(e.text)}</span></li>`).join("")
+    : `<li><time></time><span>Nothing yet.</span></li>`;
+
+  $("others").innerHTML = others.length ? others.map((h) => {
+    const l = h.last;
+    return `<div class="row">
+      <span class="dot" style="background:${color(l ? l.css : "normal")}"></span>
+      <div class="who"><b>${esc(h.name)}</b><small>${esc(h.neighborhood)} · ${esc(h.status_label)}</small></div>
+      <span class="val">${l ? Math.round(l.hi) + "°" : "--"}</span></div>`;
+  }).join("") : "<p>None.</p>";
+
+  const setup = $("setup");
+  if (state.mode !== "live" || !state.push_alerts) {
+    const lines = [];
+    if (state.mode !== "live") lines.push(`Calls are simulated. For real calls set <code>${state.missing_for_live.map(esc).join("</code>, <code>") || "SIMULATE_CALLS=false"}</code> in <code>.env</code>.`);
+    if (!state.push_alerts) lines.push("Set <code>NTFY_TOPIC</code> in <code>.env</code> to send push alerts to a phone.");
+    setup.innerHTML = "<h3>Setup</h3>" + lines.map((l) => `<p>${l}</p>`).join("");
+    setup.hidden = false;
+  } else {
+    setup.hidden = true;
+  }
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/state", { cache: "no-store" });
+    state = await res.json();
+    render();
+  } catch (err) {
+    $("sub").textContent = "Can't reach the server. Is python3 server.py running?";
+  }
+}
+
+async function post(path, body) {
+  await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  refresh();
+}
+
+$("btn-checkin").onclick = () => post(`/api/homes/${DEMO_ID}/checkin`);
+$("btn-reset").onclick = () => post(`/api/homes/${DEMO_ID}/reset`);
+$("btn-sensor").onclick = () => window.open("/sensor", "_blank");
+document.querySelectorAll("#sim button").forEach((b) => {
+  b.onclick = () => post(`/api/homes/${DEMO_ID}/simulate`, { outcome: b.dataset.outcome });
+});
+
+refresh();
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>

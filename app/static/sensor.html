@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HeatCheck sensor</title>
+<style>
+  :root {
+    --bg: #f6f3ee; --card: #fff; --ink: #1d1a17; --muted: #6b645c; --line: #e6e0d6;
+    --normal: #2f7d6d; --caution: #b8901a; --extreme-caution: #d86b17; --danger: #cc3322; --extreme-danger: #8e1b3a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  .wrap { max-width: 460px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .muted { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .readout { border-radius: 14px; padding: 18px 20px; color: #fff; background: var(--normal); transition: background .4s; }
+  .readout .num { font-size: 56px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .readout .cat { font-weight: 700; margin-top: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 16px; }
+  label { display: flex; justify-content: space-between; font-weight: 600; margin-top: 8px; }
+  label:first-child { margin-top: 0; }
+  input[type=range] { width: 100%; margin: 10px 0 14px; accent-color: var(--danger); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+  button { font: inherit; font-weight: 700; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+  button.hot { background: var(--danger); color: #fff; border-color: var(--danger); }
+  button.cool { background: var(--normal); color: #fff; border-color: var(--normal); }
+  .toggle { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 15px; }
+  .status { font-size: 13px; color: var(--muted); margin-top: 12px; min-height: 18px; }
+  select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Virtual sensor</h1>
+  <p class="muted">Stands in for the ESP32 until the hardware is ready. Sends a reading every 2 seconds.</p>
+
+  <div class="readout" id="readout">
+    <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.9">Heat index (from server)</div>
+    <div class="num" id="hi">--</div>
+    <div class="cat" id="cat">Not sent yet</div>
+  </div>
+
+  <div class="card">
+    <label>Air temperature <span id="t-val"></span></label>
+    <input type="range" id="temp" min="60" max="125" step="0.5" value="76">
+    <label>Humidity <span id="h-val"></span></label>
+    <input type="range" id="hum" min="10" max="95" step="1" value="50">
+    <label>Home <select id="home"></select></label>
+
+    <div class="buttons">
+      <button class="hot" id="heat">Heat wave</button>
+      <button class="cool" id="cool">Cool down</button>
+    </div>
+    <div class="toggle"><input type="checkbox" id="auto" checked> <span>Send every 2 seconds</span></div>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY = new URLSearchParams(location.search).get("key") || "";
+const COLORS = { normal: "--normal", caution: "--caution", "extreme-caution": "--extreme-caution", danger: "--danger", "extreme-danger": "--extreme-danger" };
+let ramp = null;
+
+function show() {
+  $("t-val").textContent = Number($("temp").value).toFixed(1) + "°F";
+  $("h-val").textContent = $("hum").value + "%";
+}
+$("temp").oninput = show;
+$("hum").oninput = show;
+show();
+
+async function loadHomes() {
+  try {
+    const state = await (await fetch("/api/state")).json();
+    const homes = state.homes.filter((h) => !h.sample);
+    $("home").innerHTML = homes.map((h) => `<option value="${h.id}">${h.name.replace(/</g, "&lt;")}</option>`).join("");
+  } catch (e) {
+    $("home").innerHTML = '<option value="demo">demo</option>';
+  }
+}
+
+async function send() {
+  const body = {
+    home_id: $("home").value || "demo",
+    temp_f: Number($("temp").value),
+    humidity: Number($("hum").value),
+    source: "virtual",
+    device_key: KEY,
+  };
+  try {
+    const res = await fetch("/api/readings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    $("hi").textContent = Math.round(data.heat_index_f) + "°";
+    $("cat").textContent = `${data.category} · status: ${data.status}`;
+    const css = data.category.toLowerCase().replace(" ", "-");
+    $("readout").style.background = getComputedStyle(document.documentElement).getPropertyValue(COLORS[css] || "--normal");
+    $("status").textContent = "Sent at " + new Date().toLocaleTimeString();
+  } catch (err) {
+    $("status").textContent = "Couldn't send: " + err.message;
+  }
+}
+
+function rampTo(targetTemp, targetHum) {
+  clearInterval(ramp);
+  ramp = setInterval(() => {
+    const t = Number($("temp").value), h = Number($("hum").value);
+    const nt = Math.abs(targetTemp - t) < 1.5 ? targetTemp : t + Math.sign(targetTemp - t) * 1.5;
+    const nh = Math.abs(targetHum - h) < 2 ? targetHum : h + Math.sign(targetHum - h) * 2;
+    $("temp").value = nt; $("hum").value = nh; show();
+    if (nt === targetTemp && nh === targetHum) clearInterval(ramp);
+  }, 1000);
+}
+$("heat").onclick = () => rampTo(94, 55);
+$("cool").onclick = () => rampTo(74, 45);
+
+loadHomes().then(send);
+setInterval(() => { if ($("auto").checked) send(); }, 2000);
+</script>
+</body>
+</html>
