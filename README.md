@@ -49,7 +49,7 @@ Check the tests pass: `python3 -m unittest discover -s tests -t . -v`
 
 ## Notification Simulation:
 
-1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-dawere4-7391`.
+1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-username-7391`.
 2. Restart the server (Ctrl+C, then `python3 server.py`) and repeat the Heat wave → No answer test. Your phone gets an urgent notification with the address, heat index and nearest open cooling spot.
 
 ---
