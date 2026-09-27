@@ -490,6 +490,39 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(self.app.get("/audio/xyz.mp3")[0], 404)
 
 
+class BadRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.cloud = FakeCloud()
+        self.app = AppClient(settings_for(self.cloud))
+
+    def tearDown(self):
+        self.app.stop()
+        self.cloud.stop()
+
+    def raw(self, data: bytes) -> bytes:
+        import socket
+        port = self.app.server.server_address[1]
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(data)
+            chunks = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        return b"".join(chunks)
+
+    def test_https_to_http_server_gets_clean_error(self):
+        tls_hello = b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03 abc HTTP/9\r\n\r\n"
+        reply = self.raw(tls_hello)
+        self.assertIn(b"400", reply.split(b"\r\n")[0], "server answers instead of crashing")
+        self.assertEqual(self.app.get("/api/state")[0], 200, "still running afterwards")
+
+    def test_garbage_request_line(self):
+        reply = self.raw(b"GET / HTTP/banana\r\n\r\n")
+        self.assertIn(b"400", reply.split(b"\r\n")[0])
+
+
 class NoVoiceKeyTests(unittest.TestCase):
     def setUp(self):
         self.cloud = FakeCloud()

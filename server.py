@@ -23,6 +23,7 @@ PAGES = {"/": "dashboard.html", "/dashboard": "dashboard.html", "/sensor": "sens
 HOME_ACTION = re.compile(r"^/api/homes/([\w-]+)/(reset|simulate|checkin|preview)$")
 AUDIO_PATH = re.compile(r"^/audio/([0-9a-f]{16})\.mp3$")
 QUIET_PATHS = {"/api/state", "/api/readings"}
+HTTPS_HINT_SHOWN = threading.Event()
 
 
 def make_handler(engine: Engine):
@@ -34,7 +35,17 @@ def make_handler(engine: Engine):
 
         # ----- plumbing -----
         def log_message(self, fmt, *args):
-            if urllib.parse.urlparse(self.path).path not in QUIET_PATHS:
+            # self.path doesn't exist yet when the request couldn't be read at all.
+            raw = getattr(self, "raw_requestline", b"") or b""
+            if raw[:2] == b"\x16\x03":  # the start of an HTTPS handshake
+                if not HTTPS_HINT_SHOWN.is_set():
+                    HTTPS_HINT_SHOWN.set()
+                    print("\n  Something connected with https://, but HeatCheck speaks plain http://.\n"
+                          "  Use http://localhost:8000 in the browser, and start the tunnel with:\n"
+                          "    cloudflared tunnel --url http://127.0.0.1:8000\n", flush=True)
+                return
+            path = getattr(self, "path", "")
+            if urllib.parse.urlparse(path).path not in QUIET_PATHS:
                 super().log_message(fmt, *args)
 
         def _send(self, code: int, body: bytes, content_type: str):

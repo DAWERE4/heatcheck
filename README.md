@@ -85,7 +85,7 @@ Optional in `.env`: `ELEVENLABS_VOICE_ID` (any voice from your ElevenLabs Voices
 2. **Tunnel:** in a second terminal, run:
 
    ```bash
-   cloudflared tunnel --url http://localhost:8000
+   cloudflared tunnel --url http://127.0.0.1:8000
    ```
 
    Copy the `https://something.trycloudflare.com` URL it prints. Leave this terminal open all day. The URL changes every time you restart cloudflared, so if you restart it, update `.env` and restart the server.
@@ -142,6 +142,7 @@ Ms. Johnson is a composite demo persona, not a real person.
 |---|---|
 | `python3` not found on Windows | Use `py server.py` |
 | Mac: `CERTIFICATE_VERIFY_FAILED` on push or calls | You have the python.org Python. Run *Install Certificates.command* in `/Applications/Python 3.x/` |
+| Tunnel URL shows **Bad Gateway** | Start the server (`py server.py`) in its own terminal, and start the tunnel with `http://127.0.0.1:8000` (not `localhost`, not `https`) |
 | The call says "an application error has occurred" | `PUBLIC_BASE_URL` is wrong or out of date, or the server isn't running. Check the cloudflared terminal and Twilio Console → Monitor → Logs |
 | The phone never rings | Account not upgraded, number lacks Voice, or phone number isn't in `+1XXXXXXXXXX` format. The dashboard timeline shows Twilio's error message |
 | Port already in use | Set `PORT=8001` in `.env` |
