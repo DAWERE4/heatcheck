@@ -5,6 +5,9 @@ Run with:  python3 -m unittest discover -s tests -v
 
 import json
 import os
+import re
+import shutil
+import tempfile
 import threading
 import unittest
 import urllib.parse
@@ -37,9 +40,10 @@ class FakeCloud:
     """Pretends to be Twilio's REST API, ntfy.sh and Open-Meteo, and records requests."""
 
     def __init__(self):
-        self.calls, self.pushes, self.weather_requests = [], [], []
+        self.calls, self.pushes, self.weather_requests, self.tts = [], [], [], []
         self.weather = open_meteo_payload()
         self.weather_status = 200
+        self.tts_status = 200
         cloud = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -57,6 +61,22 @@ class FakeCloud:
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+                if self.path.startswith("/v1/text-to-speech/"):
+                    cloud.tts.append({"path": self.path, "key": self.headers.get("xi-api-key"),
+                                      "body": json.loads(body)})
+                    if cloud.tts_status == 200:
+                        payload = b"ID3" + b"fake-mp3-audio " * 20
+                        self.send_response(200)
+                        self.send_header("Content-Type", "audio/mpeg")
+                    else:
+                        payload = json.dumps({"detail": {"status": "invalid_api_key",
+                                                         "message": "Invalid API key"}}).encode()
+                        self.send_response(cloud.tts_status)
+                        self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
                 if self.path.endswith("/Calls.json"):
                     cloud.calls.append({k: v[0] for k, v in urllib.parse.parse_qs(body).items()})
                     payload = json.dumps({"sid": f"CA{len(cloud.calls):032d}"}).encode()
@@ -79,7 +99,7 @@ class FakeCloud:
         self.server.server_close()
 
 
-def settings_for(cloud, simulate=False, device_key=""):
+def settings_for(cloud, simulate=False, device_key="", elevenlabs_key="", audio_dir=""):
     return Settings(
         port=0,
         public_base_url="https://example.trycloudflare.com",
@@ -96,6 +116,9 @@ def settings_for(cloud, simulate=False, device_key=""):
         force_simulate=simulate,
         sample_homes=True,
         weather_api_base=cloud.base,
+        elevenlabs_key=elevenlabs_key,
+        elevenlabs_api_base=cloud.base,
+        audio_dir=audio_dir,
     )
 
 
@@ -390,6 +413,98 @@ class WeatherTests(unittest.TestCase):
         self.cloud.weather = {"error": True, "reason": "bad request"}
         self.refresh()
         self.assertIn("Unexpected weather data", self.app.home.weather_error)
+
+
+class VoiceTests(unittest.TestCase):
+    def setUp(self):
+        self.cloud = FakeCloud()
+        self.audio_dir = tempfile.mkdtemp(prefix="heatcheck-audio-")
+        self.app = AppClient(settings_for(self.cloud, elevenlabs_key="sk_test", audio_dir=self.audio_dir))
+
+    def tearDown(self):
+        self.app.stop()
+        self.cloud.stop()
+        shutil.rmtree(self.audio_dir, ignore_errors=True)
+
+    def heat_up(self):
+        self.app.reading(94, 55)
+        self.app.reading(94, 55)
+        self.assertEqual(self.app.home.status, "calling")
+
+    def test_call_plays_elevenlabs_audio(self):
+        self.heat_up()
+        self.assertEqual(len(self.cloud.tts), 1, "opening line is made while the phone rings")
+        req = self.cloud.tts[0]
+        self.assertEqual(req["key"], "sk_test")
+        self.assertTrue(req["path"].startswith("/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb"))
+        self.assertIn("output_format=mp3_44100_128", req["path"])
+        self.assertEqual(req["body"]["model_id"], "eleven_flash_v2_5")
+        self.assertIn("Hello, Ms. Johnson", req["body"]["text"])
+
+        status, xml = self.app.post_form("/twilio/voice?home_id=demo&attempt=1", {"AnsweredBy": "human"})
+        self.assertEqual(len(self.cloud.tts), 1, "cached, not paid for twice")
+        self.assertIn("<Gather", xml)
+        self.assertNotIn("<Say", xml)
+        clip = re.search(r"<Play>https://example\.trycloudflare\.com/audio/([0-9a-f]{16})\.mp3</Play>", xml)
+        self.assertIsNotNone(clip, xml)
+
+        status, audio = self.app.get(f"/audio/{clip.group(1)}.mp3")
+        self.assertEqual(status, 200)
+        self.assertIn("fake-mp3-audio", audio)
+
+        status, xml = self.app.post_form("/twilio/gather?home_id=demo&attempt=1", {"Digits": "1"})
+        self.assertIn("<Play>", xml)
+        self.assertEqual(self.app.home.status, "ok")
+        self.assertIn("Thank you", self.cloud.tts[-1]["body"]["text"])
+
+    def test_elevenlabs_failure_falls_back_to_twilio_voice(self):
+        self.cloud.tts_status = 401
+        self.heat_up()
+        status, xml = self.app.post_form("/twilio/voice?home_id=demo&attempt=1", {"AnsweredBy": "human"})
+        self.assertEqual(status, 200)
+        self.assertIn("<Say", xml)
+        self.assertIn("dangerously hot", xml)
+        self.assertNotIn("<Play>", xml)
+        errors = [e for e in self.app.home.events if "ElevenLabs voice failed" in e["text"]]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Invalid API key", errors[0]["text"])
+        self.app.post_form("/twilio/gather?home_id=demo&attempt=1", {"Digits": "1"})
+        errors = [e for e in self.app.home.events if "ElevenLabs voice failed" in e["text"]]
+        self.assertEqual(len(errors), 1, "logged once, not on every line")
+        state = json.loads(self.app.get("/api/state")[1])
+        self.assertTrue(state["voice"]["elevenlabs"])
+        self.assertIn("401", state["voice"]["error"])
+
+    def test_preview_button(self):
+        status, data = self.app.post_json("/api/homes/demo/preview")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertIn("about 104 degrees", data["text"], "uses a July-style number when it isn't hot")
+        self.assertTrue(data["url"].startswith("/audio/"))
+        status, audio = self.app.get(data["url"])
+        self.assertEqual(status, 200)
+
+    def test_bad_audio_paths(self):
+        self.assertEqual(self.app.get("/audio/0123456789abcdef.mp3")[0], 404)
+        self.assertEqual(self.app.get("/audio/../../server.py")[0], 404)
+        self.assertEqual(self.app.get("/audio/xyz.mp3")[0], 404)
+
+
+class NoVoiceKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.cloud = FakeCloud()
+        self.app = AppClient(settings_for(self.cloud))
+
+    def tearDown(self):
+        self.app.stop()
+        self.cloud.stop()
+
+    def test_preview_explains_what_to_do(self):
+        status, data = self.app.post_json("/api/homes/demo/preview")
+        self.assertEqual(status, 400)
+        self.assertIn("ELEVENLABS_API_KEY", data["error"])
+        self.assertIn("Hello, Ms. Johnson", data["text"])
+        self.assertEqual(self.cloud.tts, [])
 
 
 if __name__ == "__main__":

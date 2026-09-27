@@ -21,14 +21,19 @@ def response(*parts: str) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?><Response>' + "".join(parts) + "</Response>"
 
 
-def gather(prompt: str, action_url: str, lang: str = "en", timeout: int = 6) -> str:
+def play(url: str) -> str:
+    return f"<Play>{escape(url)}</Play>"
+
+
+def gather(prompt: str, action_url: str, lang: str = "en", timeout: int = 6, inner: str = None) -> str:
+    """Listen for a keypress or speech. `inner` (a <Play> or <Say>) is what plays while listening."""
     v = voice_for(lang)
     hints = "yes, okay, fine, I'm okay, help, I need help" if lang == "en" else "sí, bien, estoy bien, ayuda, necesito ayuda"
     return (
         f'<Gather input="dtmf speech" numDigits="1" timeout="{timeout}" speechTimeout="auto" '
         f'language={quoteattr(v["language"])} hints={quoteattr(hints)} '
         f'action={quoteattr(action_url)} method="POST" actionOnEmptyResult="false">'
-        f"{say(prompt, lang)}</Gather>"
+        f"{inner if inner is not None else say(prompt, lang)}</Gather>"
     )
 
 

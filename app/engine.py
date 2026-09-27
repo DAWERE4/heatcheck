@@ -25,6 +25,7 @@ from . import twiml
 from .cooling import local_now, nearest_open
 from .heat import category, heat_index_f
 from .services import ServiceError, ntfy_publish, twilio_create_call
+from .voice import Voice
 from .weather import WeatherError, fetch_weather
 
 CALL_WATCHDOG_SECONDS = 120  # if a call never reports back, escalate anyway
@@ -76,6 +77,8 @@ class Engine:
         self.run_async = run_async
         self.weather_fetch = fetch_weather  # swapped out in tests
         self.weather_checked_at = 0.0
+        self.voice = Voice(settings)
+        self._voice_error_logged = ""
 
     # ---------- helpers ----------
 
@@ -98,6 +101,22 @@ class Engine:
 
     def spot_for(self, home) -> dict:
         return nearest_open(home.lat, home.lon, self.spots, self.now_fn())
+
+    def speak(self, home, text: str, lang: str = None) -> str:
+        """TwiML for saying `text`: the ElevenLabs clip if we have one, else Twilio's voice."""
+        lang = lang or home.language
+        clip = self.voice.get(text)
+        if clip:
+            return twiml.play(self.url(f"/audio/{clip}.mp3"))
+        if self.voice.enabled and self.voice.last_error and self.voice.last_error != self._voice_error_logged:
+            self._voice_error_logged = self.voice.last_error
+            self.store.add_event(home, f"ElevenLabs voice failed, using the backup voice. {self.voice.last_error}", "error")
+        return twiml.say(text, lang)
+
+    def prefetch_voice(self, home) -> None:
+        """Make the opening line's audio while the phone is ringing, so there's no pause."""
+        if self.voice.enabled:
+            self._bg(self.voice.get, self.prompt_text(home, 1))
 
     # ---------- readings ----------
 
@@ -158,6 +177,7 @@ class Engine:
             self.store.set_status(home, "calling", trigger)
         self.store.add_event(home, f"{trigger}. Calling {home.name} to check in.", "alert")
         if self.calls_live(home):
+            self.prefetch_voice(home)
             self._bg(self._place_resident_call, home)
         else:
             why = "no Twilio set up" if not self.settings.live_calls else "no RESIDENT_PHONE set"
@@ -179,9 +199,9 @@ class Engine:
             self.store.add_event(home, f"Couldn't place the call. {err}", "error")
             self.escalate(home, "couldn't be reached because the check-in call failed")
 
-    def heat_sentence(self, home) -> str:
+    def heat_sentence(self, home, hi: int = None) -> str:
         """One sentence about how hot it is, honest about whether we measured inside."""
-        hi = self.last_hi(home)
+        hi = self.last_hi(home) if hi is None else hi
         if home.language == "es":
             if home.using_weather:
                 return (
@@ -196,20 +216,20 @@ class Engine:
             )
         return f"It is getting dangerously hot inside your home, about {hi} degrees."
 
-    def prompt_text(self, home, attempt: int) -> str:
+    def prompt_text(self, home, attempt: int, hi: int = None) -> str:
         if home.language == "es":
             if attempt > 1:
                 return "Perdón, no le entendí. Si está bien, oprima 1. Si necesita ayuda, oprima 2."
             return (
                 f"Hola, {home.name}. Le habla HeatCheck, su llamada de seguridad por el calor. "
-                f"{self.heat_sentence(home)} "
+                f"{self.heat_sentence(home, hi)} "
                 "Si está bien, oprima 1 o diga sí. Si necesita ayuda, oprima 2 o diga ayuda."
             )
         if attempt > 1:
             return "Sorry, I didn't catch that. If you are okay, press 1. If you need help, press 2."
         return (
             f"Hello, {home.name}. This is HeatCheck, your heat safety check. "
-            f"{self.heat_sentence(home)} "
+            f"{self.heat_sentence(home, hi)} "
             "If you are okay, press 1 or say yes. If you need help, press 2 or say help."
         )
 
@@ -270,12 +290,14 @@ class Engine:
         if answered_by.startswith("machine") or answered_by == "fax":
             self.store.add_event(home, "Voicemail picked up.", "info")
             self.escalate(home, "didn't pick up (the call went to voicemail)")
-            return twiml.response(twiml.say(self.voicemail_text(home), home.language), twiml.hangup())
+            return twiml.response(self.speak(home, self.voicemail_text(home)), twiml.hangup())
+        prompt = self.prompt_text(home, attempt)
         return twiml.response(
             twiml.gather(
-                self.prompt_text(home, attempt),
+                prompt,
                 self.url("/twilio/gather", home_id=home.id, attempt=attempt),
                 home.language,
+                inner=self.speak(home, prompt),
             ),
             twiml.redirect(self.url("/twilio/no-input", home_id=home.id, attempt=attempt)),
         )
@@ -289,20 +311,20 @@ class Engine:
 
         if result == "ok":
             self.mark_ok(home)
-            return twiml.response(twiml.say(self.ok_text(home), home.language), twiml.hangup())
+            return twiml.response(self.speak(home, self.ok_text(home)), twiml.hangup())
         if result == "help":
             self.escalate(home, "asked for help on the check-in call")
-            return twiml.response(twiml.say(self.help_text(home), home.language), twiml.hangup())
+            return twiml.response(self.speak(home, self.help_text(home)), twiml.hangup())
         if attempt < 2:
             return twiml.response(twiml.redirect(self.url("/twilio/voice", home_id=home.id, attempt=2)))
         self.escalate(home, "gave an unclear answer twice")
-        return twiml.response(twiml.say(self.goodbye_text(home), home.language), twiml.hangup())
+        return twiml.response(self.speak(home, self.goodbye_text(home)), twiml.hangup())
 
     def no_input_twiml(self, home, attempt: int) -> str:
         if attempt < 2:
             return twiml.response(twiml.redirect(self.url("/twilio/voice", home_id=home.id, attempt=2)))
         self.escalate(home, "didn't respond on the check-in call")
-        return twiml.response(twiml.say(self.goodbye_text(home), home.language), twiml.hangup())
+        return twiml.response(self.speak(home, self.goodbye_text(home)), twiml.hangup())
 
     def status_callback(self, home, params: dict, leg: str) -> None:
         status = params.get("CallStatus", "")
@@ -328,7 +350,8 @@ class Engine:
             "Please go check on them now. If they are confused or not sweating, call 9 1 1. "
             "Details were sent to your phone."
         )
-        return twiml.response(twiml.say(message), twiml.pause(1), twiml.say(message), twiml.hangup())
+        spoken = self.speak(home, message, "en")
+        return twiml.response(spoken, twiml.pause(1), spoken, twiml.hangup())
 
     # ---------- outcomes ----------
 
@@ -396,6 +419,21 @@ class Engine:
                 self.store.add_event(home, f"Couldn't call {home.neighbor_name}. {err}", "error")
 
     # ---------- dashboard actions ----------
+
+    def preview(self, home) -> dict:
+        """The opening line of the call as audio, so the dashboard can play it.
+        If it isn't hot right now, preview with a July-style heat index of 104°F."""
+        hi = self.last_hi(home)
+        if hi < self.settings.alert_heat_index_f:
+            hi = 104
+        text = self.prompt_text(home, 1, hi=hi)
+        if not self.voice.enabled:
+            return {"ok": False, "text": text,
+                    "error": "Add ELEVENLABS_API_KEY to .env and restart the server to hear the ElevenLabs voice."}
+        clip = self.voice.get(text, timeout=15)
+        if not clip:
+            return {"ok": False, "text": text, "error": f"ElevenLabs didn't work: {self.voice.last_error}"}
+        return {"ok": True, "text": text, "url": f"/audio/{clip}.mp3"}
 
     def reset(self, home) -> None:
         with self.store.lock:
@@ -484,6 +522,7 @@ class Engine:
             "threshold_f": s.alert_heat_index_f,
             "recheck_minutes": s.recheck_minutes,
             "push_alerts": bool(s.ntfy_topic),
+            "voice": {"elevenlabs": self.voice.enabled, "error": self.voice.last_error},
             "weather_enabled": s.weather_enabled,
             "weather_refresh_minutes": s.weather_refresh_minutes,
             "sensor_stale_minutes": s.sensor_stale_minutes,

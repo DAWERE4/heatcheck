@@ -1,6 +1,9 @@
 # secrets
 .env
 
+# generated call audio (ElevenLabs)
+data/audio_cache/
+
 # python
 __pycache__/
 *.pyc

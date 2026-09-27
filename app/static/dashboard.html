@@ -80,6 +80,9 @@
   .sim { display: none; margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: #fff7ee; border: 1px dashed #f0c08a; }
   .sim p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
 
+  .preview { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
+  .preview .err { color: var(--extreme-danger); margin-top: 6px; }
+  .preview q { color: var(--muted); }
   .cool { margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: #eef5f3; border: 1px solid #cfe5df; }
   .cool.closed { background: #fbefec; border-color: #f0c9c1; }
   .cool h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -128,6 +131,7 @@
   </div>
   <span class="badge" id="mode">…</span>
   <span class="badge" id="push">…</span>
+  <span class="badge" id="voice">…</span>
   <span class="badge" id="threshold">…</span>
 </header>
 
@@ -158,6 +162,7 @@
       <button class="primary" id="btn-checkin">Start check-in now</button>
       <button id="btn-reset">Reset</button>
       <button id="btn-sensor">Open virtual sensor</button>
+      <button id="btn-preview">▶ Hear the call</button>
     </div>
 
     <div class="sim" id="sim">
@@ -173,6 +178,8 @@
       <h3>Nearest cooling spot</h3>
       <div id="cool-body">…</div>
     </div>
+
+    <div class="preview" id="preview" hidden></div>
 
     <h3 class="section">Timeline</h3>
     <ol class="events" id="events"></ol>
@@ -256,6 +263,10 @@ function render() {
   $("mode").classList.toggle("on", state.mode === "live");
   $("push").textContent = state.push_alerts ? "Push alerts on" : "Push alerts off";
   $("push").classList.toggle("on", state.push_alerts);
+  const v = state.voice || {};
+  $("voice").textContent = v.elevenlabs ? (v.error ? "ElevenLabs voice (failing)" : "ElevenLabs voice") : "Twilio voice";
+  $("voice").classList.toggle("on", !!v.elevenlabs && !v.error);
+  $("voice").title = v.error || "";
   $("threshold").textContent = `Alert at heat index ${state.threshold_f}°F`;
 
   if (!home) return;
@@ -352,6 +363,34 @@ async function post(path, body) {
 $("btn-checkin").onclick = () => post(`/api/homes/${DEMO_ID}/checkin`);
 $("btn-reset").onclick = () => post(`/api/homes/${DEMO_ID}/reset`);
 $("btn-sensor").onclick = () => window.open("/sensor", "_blank");
+
+let previewAudio = null;
+$("btn-preview").onclick = async () => {
+  const box = $("preview");
+  const btn = $("btn-preview");
+  if (previewAudio && !previewAudio.paused) { previewAudio.pause(); btn.textContent = "▶ Hear the call"; return; }
+  btn.disabled = true;
+  btn.textContent = "Loading voice…";
+  box.hidden = false;
+  box.innerHTML = "Making the audio…";
+  try {
+    const res = await fetch(`/api/homes/${DEMO_ID}/preview`, { method: "POST" });
+    const data = await res.json();
+    box.innerHTML = `<q>${esc(data.text)}</q>` + (data.ok ? "" : `<div class="err">${esc(data.error)}</div>`);
+    if (data.ok) {
+      previewAudio = new Audio(data.url);
+      previewAudio.onended = () => { btn.textContent = "▶ Hear the call"; };
+      await previewAudio.play();
+      btn.textContent = "■ Stop";
+    } else {
+      btn.textContent = "▶ Hear the call";
+    }
+  } catch (err) {
+    box.innerHTML = `<div class="err">Couldn't play it: ${esc(err.message)}</div>`;
+    btn.textContent = "▶ Hear the call";
+  }
+  btn.disabled = false;
+};
 $("btn-weather").onclick = () => post("/api/weather/refresh");
 document.querySelectorAll("#sim button").forEach((b) => {
   b.onclick = () => post(`/api/homes/${DEMO_ID}/simulate`, { outcome: b.dataset.outcome });

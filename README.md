@@ -6,7 +6,7 @@
 indoor sensor (phone slider for now)            ─┐
 live outdoor weather (Open-Meteo), used when     ├→ server computes the heat index (National Weather Service formula)
   no sensor has reported for 5 minutes          ─┘
-   → heat index over 90°F twice in a row → phone call: "Press 1 if you're OK, 2 if you need help"
+   → heat index over 90°F twice in a row → phone call in a natural ElevenLabs voice: "Press 1 if you're OK, 2 if you need help"
         pressed 1 / said "yes"   → cooling tips + nearest cooling spot open right now, call again in 30 min
         pressed 2 / no answer / voicemail / hung up → push alert (and call) to a neighbor
    → dashboard shows every home live
@@ -19,13 +19,14 @@ heatcheck/
 │   ├── heat.py                ← NWS heat index + categories
 │   ├── cooling.py             ← which cooling spot is open now, and closest
 │   ├── weather.py             ← live outdoor weather + forecast peak (Open-Meteo)
+│   ├── voice.py               ← natural call voice (ElevenLabs), cached, falls back to Twilio's voice
 │   ├── services.py            ← Twilio calls + ntfy push alerts
 │   ├── twiml.py               ← what the phone call says
 │   ├── store.py, config.py
 │   └── static/dashboard.html, sensor.html
 ├── data/homes.json            ← residents (phones come from .env)
 ├── data/cooling_spots.json    ← cooling centers + hours
-└── tests/                     ← 24 tests, including the full call flow against fake Twilio and fake weather
+└── tests/                     ← 29 tests, including the full call flow against fake Twilio, weather and ElevenLabs
 ```
 
 ---
@@ -61,6 +62,20 @@ The dashboard's **Outside now** card shows the real heat index where the residen
 If no indoor sensor has sent a reading for 5 minutes, check-ins use this outdoor heat index instead. The call and the neighbor alert then say it's the heat *outside*, because a house without AC can be hotter than that. As soon as the sensor page sends again, the indoor reading takes over.
 
 Settings in `.env`: `WEATHER=false` turns it off, `WEATHER_REFRESH_MINUTES` and `SENSOR_STALE_MINUTES` change the timing.
+
+---
+
+## Natural voice (ElevenLabs)
+
+The check-in call speaks in a warm, natural ElevenLabs voice instead of Twilio's robotic one. That matters when you're calling an 80-year-old who has learned to hang up on robocalls.
+
+1. Make a free ElevenLabs account, create an API key (allow **Text to Speech**), and add it to `.env`: `ELEVENLABS_API_KEY=...`
+2. Restart the server. The header badge says **ElevenLabs voice**.
+3. Click **▶ Hear the call** on the dashboard to hear the opening line in your browser. This works even without Twilio.
+
+Each sentence is generated once with the fast `eleven_flash_v2_5` model and saved in `data/audio_cache/`, so repeat calls don't use credits. If ElevenLabs is down or the key is wrong, the call automatically uses Twilio's voice instead and the dashboard shows why.
+
+Optional in `.env`: `ELEVENLABS_VOICE_ID` (any voice from your ElevenLabs Voices page; default is "George") and `ELEVENLABS_SPEED=0.9` to speak a little slower.
 
 ---
 
@@ -109,6 +124,7 @@ We didn't have an ESP32 at HackGT, so there's no firmware in this repo. The serv
    - Half of Atlanta's low-income households spend more than 10.2% of their income on energy, so many ration their AC.
 3. **Live demo:**
    - Point at **Outside now**: that's today's real Atlanta weather. "With no sensor, this alone triggers the call."
+   - Click **▶ Hear the call** so the judge hears the voice Ms. Johnson would hear.
    - "It isn't dangerous today, so here's a July afternoon." Let the judge click **Heat wave** on the sensor page.
    - Hand the judge your phone. It rings with the check-in. Ask them not to press anything.
    - About 25 seconds later the call gives up, and the neighbor alert pops up (keep ntfy.sh open in a laptop tab too, so everyone sees it).
@@ -130,6 +146,7 @@ Ms. Johnson is a composite demo persona, not a real person.
 | The phone never rings | Account not upgraded, number lacks Voice, or phone number isn't in `+1XXXXXXXXXX` format. The dashboard timeline shows Twilio's error message |
 | Port already in use | Set `PORT=8001` in `.env` |
 | Sample homes are distracting | Set `SAMPLE_HOMES=false` |
+| Badge says "ElevenLabs voice (failing)" | Hover it to see why. Usually a wrong key or a key without Text to Speech permission. Calls still work with Twilio's voice |
 | "Weather update failed" on the dashboard | Check the laptop's internet. Everything else keeps working; `WEATHER=false` hides it |
 | The big number flips back to outdoor weather | The sensor page stopped sending for 5 minutes (closed tab or sleeping phone). Reopen it |
 
@@ -169,3 +186,4 @@ Heat index bands (National Weather Service): Caution 80–90°F, Extreme caution
 - NWS heat index equation: https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
 - CBC on the BC Coroners Service heat dome review: https://www.cbc.ca/news/canada/british-columbia/bc-heat-dome-coroners-report-1.6480026
 - Weather data by Open-Meteo.com (CC BY 4.0): https://open-meteo.com/
+- Call voice by ElevenLabs: https://elevenlabs.io/

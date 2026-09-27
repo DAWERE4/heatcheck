@@ -20,7 +20,8 @@ from app.store import Store
 
 STATIC = Path(__file__).resolve().parent / "app" / "static"
 PAGES = {"/": "dashboard.html", "/dashboard": "dashboard.html", "/sensor": "sensor.html"}
-HOME_ACTION = re.compile(r"^/api/homes/([\w-]+)/(reset|simulate|checkin)$")
+HOME_ACTION = re.compile(r"^/api/homes/([\w-]+)/(reset|simulate|checkin|preview)$")
+AUDIO_PATH = re.compile(r"^/audio/([0-9a-f]{16})\.mp3$")
 QUIET_PATHS = {"/api/state", "/api/readings"}
 
 
@@ -82,6 +83,11 @@ def make_handler(engine: Engine):
                 return self._send(200, page, "text/html; charset=utf-8")
             if path == "/api/state":
                 return self.send_json(engine.state())
+            audio = AUDIO_PATH.match(path)
+            if audio:
+                clip = engine.voice.path(audio.group(1))
+                if clip.exists():
+                    return self._send(200, clip.read_bytes(), "audio/mpeg")
             if path == "/health":
                 return self.send_json({"ok": True, "mode": engine.state()["mode"]})
             self.send_json({"error": "not found"}, 404)
@@ -141,6 +147,9 @@ def make_handler(engine: Engine):
                 engine.reset(home)
             elif action == "checkin":
                 engine.start_checkin(home, "Manual check-in from the dashboard")
+            elif action == "preview":
+                result = engine.preview(home)
+                return self.send_json(result, 200 if result["ok"] else 400)
             elif action == "simulate":
                 outcome = self.body_json().get("outcome", "")
                 if not engine.simulate(home, outcome):
@@ -239,6 +248,10 @@ def main():
         missing = ", ".join(s.missing_for_live()) or "SIMULATE_CALLS=true"
         print(f"  Calls: SIMULATED (missing: {missing})")
     print(f"  Push alerts: {'ntfy topic ' + s.ntfy_topic if s.ntfy_topic else 'OFF (set NTFY_TOPIC in .env)'}")
+    if s.elevenlabs_key:
+        print(f"  Voice: ElevenLabs ({s.elevenlabs_model}, voice {s.elevenlabs_voice_id})")
+    else:
+        print("  Voice: Twilio's built-in voice (set ELEVENLABS_API_KEY for the ElevenLabs voice)")
     if s.weather_enabled:
         print(f"  Weather: live from Open-Meteo every {s.weather_refresh_minutes:g} min "
               f"(used when no sensor has reported for {s.sensor_stale_minutes:g} min)")
