@@ -2,8 +2,6 @@
 
 **HeatCheck watches the indoor heat in the homes of seniors who can't run AC, calls them when it gets dangerous, and gets a neighbor to their door if they don't answer.**
 
-Built at HackGT 13 for *A Marina's Mission* (presented by Aramco).
-
 ```
 sensor (ESP32 or phone slider)
    → server computes the heat index (National Weather Service formula)
@@ -12,9 +10,6 @@ sensor (ESP32 or phone slider)
         pressed 2 / no answer / voicemail / hung up → push alert (and call) to a neighbor
    → dashboard shows every home live
 ```
-
-No Python packages to install. It only uses the standard library.
-
 ```
 heatcheck/
 ├── server.py                  ← run this
@@ -34,27 +29,7 @@ heatcheck/
 
 ---
 
-## Step 1: Put it on GitHub (5 min)
-
-1. On github.com, create an **empty public** repo called `heatcheck` (no README).
-2. Unzip this folder, open a terminal in it, and run:
-
-   ```bash
-   git init
-   git add -A
-   git commit -m "HeatCheck starter: server, dashboard, virtual sensor, ESP32 sketch"
-   git branch -M main
-   git remote add origin https://github.com/YOUR-USERNAME/heatcheck.git
-   git push -u origin main
-   ```
-
-   If it asks for a password, GitHub wants a token, not your password. Easiest fixes: install the GitHub CLI and run `gh auth login`, or use GitHub Desktop (File → Add local repository).
-
-3. Commit every time something works (`git add -A && git commit -m "..."` then `git push`). HackGT doesn't allow past projects, and a commit history from this weekend shows you built it here.
-
----
-
-## Step 2: Run it with simulated calls (5 min, no accounts)
+## Simulation:
 
 ```bash
 cp .env.example .env        # Windows: copy .env.example .env
@@ -71,13 +46,10 @@ Check the tests pass: `python3 -m unittest discover -s tests -t . -v`
 
 ---
 
-## Step 3: Push alerts to a phone (5 min)
+## Notification Simulation:
 
-1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-yourname-7391`. Anyone who knows the topic name can read it, so don't use your real name alone.
-2. Put the same topic in `.env`: `NTFY_TOPIC=heatcheck-yourname-7391`
-3. Restart the server (Ctrl+C, then `python3 server.py`) and repeat the Heat wave → No answer test. Your phone gets an urgent notification with the address, heat index and nearest open cooling spot.
-
-We use ntfy instead of text messages because US carriers block texts from unregistered Twilio numbers, and registration takes days.
+1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-dawere4-7391`.
+2. Restart the server (Ctrl+C, then `python3 server.py`) and repeat the Heat wave → No answer test. Your phone gets an urgent notification with the address, heat index and nearest open cooling spot.
 
 ---
 
