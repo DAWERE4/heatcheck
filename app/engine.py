@@ -28,6 +28,7 @@ from .services import ServiceError, ntfy_publish, twilio_create_call
 from .voice import Voice
 from .weather import WeatherError, fetch_weather
 
+LANGUAGE_NAMES = {"en": "English", "es": "Español"}
 CALL_WATCHDOG_SECONDS = 120  # if a call never reports back, escalate anyway
 COOL_DOWN_MARGIN_F = 4.0     # must drop this far below the threshold to reset
 COOL_DOWN_READINGS = 3
@@ -105,7 +106,7 @@ class Engine:
     def speak(self, home, text: str, lang: str = None) -> str:
         """TwiML for saying `text`: the ElevenLabs clip if we have one, else Twilio's voice."""
         lang = lang or home.language
-        clip = self.voice.get(text)
+        clip = self.voice.get(text, lang=lang)
         if clip:
             return twiml.play(self.url(f"/audio/{clip}.mp3"))
         if self.voice.enabled and self.voice.last_error and self.voice.last_error != self._voice_error_logged:
@@ -116,7 +117,7 @@ class Engine:
     def prefetch_voice(self, home) -> None:
         """Make the opening line's audio while the phone is ringing, so there's no pause."""
         if self.voice.enabled:
-            self._bg(self.voice.get, self.prompt_text(home, 1))
+            self._bg(lambda: self.voice.get(self.prompt_text(home, 1), lang=home.language))
 
     # ---------- readings ----------
 
@@ -420,6 +421,15 @@ class Engine:
 
     # ---------- dashboard actions ----------
 
+    def set_language(self, home, lang: str) -> bool:
+        """Switch which language this resident is called in (English or Spanish)."""
+        if lang not in twiml.VOICES:
+            return False
+        if lang != home.language:
+            home.language = lang
+            self.store.add_event(home, f"Calls will now be in {LANGUAGE_NAMES.get(lang, lang)}.", "info")
+        return True
+
     def preview(self, home) -> dict:
         """The opening line of the call as audio, so the dashboard can play it.
         If it isn't hot right now, preview with a July-style heat index of 104°F."""
@@ -430,7 +440,7 @@ class Engine:
         if not self.voice.enabled:
             return {"ok": False, "text": text,
                     "error": "Add ELEVENLABS_API_KEY to .env and restart the server to hear the ElevenLabs voice."}
-        clip = self.voice.get(text, timeout=15)
+        clip = self.voice.get(text, timeout=15, lang=home.language)
         if not clip:
             return {"ok": False, "text": text, "error": f"ElevenLabs didn't work: {self.voice.last_error}"}
         return {"ok": True, "text": text, "url": f"/audio/{clip}.mp3"}
@@ -523,6 +533,7 @@ class Engine:
             "recheck_minutes": s.recheck_minutes,
             "push_alerts": bool(s.ntfy_topic),
             "voice": {"elevenlabs": self.voice.enabled, "error": self.voice.last_error},
+            "languages": LANGUAGE_NAMES,
             "weather_enabled": s.weather_enabled,
             "weather_refresh_minutes": s.weather_refresh_minutes,
             "sensor_stale_minutes": s.sensor_stale_minutes,

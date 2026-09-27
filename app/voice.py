@@ -36,23 +36,28 @@ class Voice:
     def enabled(self) -> bool:
         return bool(self.settings.elevenlabs_key)
 
-    def clip_id(self, text: str) -> str:
-        key = "|".join([self.settings.elevenlabs_voice_id, self.settings.elevenlabs_model,
+    def voice_id(self, lang: str = "en") -> str:
+        if lang == "es" and self.settings.elevenlabs_voice_id_es:
+            return self.settings.elevenlabs_voice_id_es
+        return self.settings.elevenlabs_voice_id
+
+    def clip_id(self, text: str, lang: str = "en") -> str:
+        key = "|".join([self.voice_id(lang), self.settings.elevenlabs_model,
                         self.settings.elevenlabs_speed or "", text])
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:CLIP_ID_LENGTH]
 
     def path(self, clip_id: str) -> Path:
         return self.dir / f"{clip_id}.mp3"
 
-    def cached(self, text: str):
-        cid = self.clip_id(text)
+    def cached(self, text: str, lang: str = "en"):
+        cid = self.clip_id(text, lang)
         return cid if self.path(cid).exists() else None
 
-    def get(self, text: str, timeout: float = 8.0):
+    def get(self, text: str, timeout: float = 8.0, lang: str = "en"):
         """Return a clip id for `text`, making it if needed. None means "use the backup voice"."""
         if not self.enabled:
             return None
-        cid = self.clip_id(text)
+        cid = self.clip_id(text, lang)
         if self.path(cid).exists():
             return cid
 
@@ -66,7 +71,7 @@ class Voice:
             return cid if self.path(cid).exists() else None
 
         try:
-            audio = self._synthesize(text, timeout)
+            audio = self._synthesize(text, timeout, self.voice_id(lang))
             self.dir.mkdir(parents=True, exist_ok=True)
             tmp = self.path(cid).with_suffix(".tmp")
             tmp.write_bytes(audio)
@@ -81,7 +86,7 @@ class Voice:
                 self._inflight.pop(cid, None)
             event.set()
 
-    def _synthesize(self, text: str, timeout: float) -> bytes:
+    def _synthesize(self, text: str, timeout: float, voice_id: str) -> bytes:
         s = self.settings
         body = {"text": text, "model_id": s.elevenlabs_model}
         if s.elevenlabs_speed:
@@ -89,7 +94,7 @@ class Voice:
                 body["voice_settings"] = {"speed": float(s.elevenlabs_speed)}
             except ValueError:
                 pass
-        url = (f"{s.elevenlabs_api_base}/v1/text-to-speech/{s.elevenlabs_voice_id}"
+        url = (f"{s.elevenlabs_api_base}/v1/text-to-speech/{voice_id}"
                "?output_format=mp3_44100_128")
         request = urllib.request.Request(
             url, data=json.dumps(body).encode("utf-8"), method="POST",

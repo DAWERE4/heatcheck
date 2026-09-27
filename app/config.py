@@ -65,6 +65,7 @@ class Settings:
     sensor_stale_minutes: float = 5.0
     elevenlabs_key: str = ""
     elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"   # "George", a default ElevenLabs voice
+    elevenlabs_voice_id_es: str = ""                    # optional separate voice for Spanish calls
     elevenlabs_model: str = "eleven_flash_v2_5"         # fast, cheap, speaks English and Spanish
     elevenlabs_speed: str = ""                          # e.g. 0.9 to speak a little slower
     elevenlabs_api_base: str = "https://api.elevenlabs.io"
@@ -93,6 +94,7 @@ class Settings:
             sensor_stale_minutes=_env_float("SENSOR_STALE_MINUTES", 5.0),
             elevenlabs_key=_env("ELEVENLABS_API_KEY"),
             elevenlabs_voice_id=_env("ELEVENLABS_VOICE_ID") or "JBFqnCBsd6RMkjVDRZzb",
+            elevenlabs_voice_id_es=_env("ELEVENLABS_VOICE_ID_ES"),
             elevenlabs_model=_env("ELEVENLABS_MODEL") or "eleven_flash_v2_5",
             elevenlabs_speed=_env("ELEVENLABS_SPEED"),
             elevenlabs_api_base=_env("ELEVENLABS_API_BASE", "https://api.elevenlabs.io").rstrip("/"),

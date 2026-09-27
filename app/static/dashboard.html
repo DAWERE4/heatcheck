@@ -80,6 +80,11 @@
   .sim { display: none; margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: #fff7ee; border: 1px dashed #f0c08a; }
   .sim p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
 
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 9px 12px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .seg-label { align-self: center; font-size: 13px; color: var(--muted); margin-left: 4px; }
   .preview { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
   .preview .err { color: var(--extreme-danger); margin-top: 6px; }
   .preview q { color: var(--muted); }
@@ -163,6 +168,11 @@
       <button id="btn-reset">Reset</button>
       <button id="btn-sensor">Open virtual sensor</button>
       <button id="btn-preview">▶ Hear the call</button>
+      <span class="seg-label">Call language</span>
+      <div class="seg" id="lang" role="group" aria-label="Call language">
+        <button data-lang="en">English</button>
+        <button data-lang="es">Español</button>
+      </div>
     </div>
 
     <div class="sim" id="sim">
@@ -287,6 +297,7 @@ function render() {
     $("sub").textContent = `Air ${last.temp_f}°F · humidity ${Math.round(last.humidity)}% · from ${src} · ${ago(last.t)}`;
   }
   renderOutside(home);
+  document.querySelectorAll("#lang button").forEach((b) => b.classList.toggle("on", b.dataset.lang === home.language));
   spark(home.history, state.threshold_f);
 
   $("sim").style.display = home.status === "calling" && !home.calls_live ? "block" : "none";
@@ -365,6 +376,13 @@ $("btn-reset").onclick = () => post(`/api/homes/${DEMO_ID}/reset`);
 $("btn-sensor").onclick = () => window.open("/sensor", "_blank");
 
 let previewAudio = null;
+document.querySelectorAll("#lang button").forEach((b) => {
+  b.onclick = async () => {
+    if (previewAudio) { previewAudio.pause(); $("btn-preview").textContent = "▶ Hear the call"; }
+    $("preview").hidden = true;
+    await post(`/api/homes/${DEMO_ID}/language`, { language: b.dataset.lang });
+  };
+});
 $("btn-preview").onclick = async () => {
   const box = $("preview");
   const btn = $("btn-preview");

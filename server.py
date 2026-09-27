@@ -20,7 +20,7 @@ from app.store import Store
 
 STATIC = Path(__file__).resolve().parent / "app" / "static"
 PAGES = {"/": "dashboard.html", "/dashboard": "dashboard.html", "/sensor": "sensor.html"}
-HOME_ACTION = re.compile(r"^/api/homes/([\w-]+)/(reset|simulate|checkin|preview)$")
+HOME_ACTION = re.compile(r"^/api/homes/([\w-]+)/(reset|simulate|checkin|preview|language)$")
 AUDIO_PATH = re.compile(r"^/audio/([0-9a-f]{16})\.mp3$")
 QUIET_PATHS = {"/api/state", "/api/readings"}
 HTTPS_HINT_SHOWN = threading.Event()
@@ -158,6 +158,10 @@ def make_handler(engine: Engine):
                 engine.reset(home)
             elif action == "checkin":
                 engine.start_checkin(home, "Manual check-in from the dashboard")
+            elif action == "language":
+                lang = str(self.body_json().get("language", ""))
+                if not engine.set_language(home, lang):
+                    return self.send_json({"error": "language must be en or es"}, 400)
             elif action == "preview":
                 result = engine.preview(home)
                 return self.send_json(result, 200 if result["ok"] else 400)

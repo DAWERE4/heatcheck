@@ -1,138 +1,121 @@
 # HeatCheck
 
-**HeatCheck calls seniors who can't run AC when it gets dangerously hot, and gets a neighbor to their door if they don't answer. It works from live weather with nothing but a phone number, and an indoor sensor makes it precise.**
+**HeatCheck calls seniors who can't run AC when it gets dangerously hot, and gets a neighbor to their door if they don't answer.**
+
+Built solo at HackGT 13 for *A Marina's Mission* (presented by Aramco).
+
+<!-- Add your links: -->
+<!-- Demo video: https://youtu.be/... · Devpost: https://devpost.com/software/... -->
 
 ```
-indoor sensor (phone slider for now)            ─┐
-live outdoor weather (Open-Meteo), used when     ├→ server computes the heat index (National Weather Service formula)
-  no sensor has reported for 5 minutes          ─┘
-   → heat index over 90°F twice in a row → phone call in a natural ElevenLabs voice: "Press 1 if you're OK, 2 if you need help"
-        pressed 1 / said "yes"   → cooling tips + nearest cooling spot open right now, call again in 30 min
-        pressed 2 / no answer / voicemail / hung up → push alert (and call) to a neighbor
-   → dashboard shows every home live
+indoor sensor, or live outdoor weather if there's no sensor
+   → heat index (National Weather Service formula) reaches 90°F twice in a row
+   → phone call in a natural voice, in English or Spanish: "Press 1 if you're okay, 2 if you need help"
+        okay           → cooling tips + nearest cooling center open right now; calls again in 30 min if still hot
+        help / no answer / voicemail → urgent alert to a neighbor's phone with the address and directions
 ```
-```
-heatcheck/
-├── server.py                  ← run this
-├── app/
-│   ├── engine.py              ← the check-in logic (start reading here)
-│   ├── heat.py                ← NWS heat index + categories
-│   ├── cooling.py             ← which cooling spot is open now, and closest
-│   ├── weather.py             ← live outdoor weather + forecast peak (Open-Meteo)
-│   ├── voice.py               ← natural call voice (ElevenLabs), cached, falls back to Twilio's voice
-│   ├── services.py            ← Twilio calls + ntfy push alerts
-│   ├── twiml.py               ← what the phone call says
-│   ├── store.py, config.py
-│   └── static/dashboard.html, sensor.html
-├── data/homes.json            ← residents (phones come from .env)
-├── data/cooling_spots.json    ← cooling centers + hours
-└── tests/                     ← 29 tests, including the full call flow against fake Twilio, weather and ElevenLabs
-```
+
+- **Works with just a phone number.** No sensor? It uses live local weather, and the call says it's the heat *outside*.
+- **Natural voice** from ElevenLabs, with automatic fallback to Twilio's voice.
+- **English and Spanish,** switchable per resident from the dashboard.
+- **Knows which cooling centers are open right now**, not just where they are.
+- **Live dashboard** with every home, the outdoor forecast peak, and a timeline of every call.
 
 ---
 
-## Simulation:
+## Quick start (2 minutes, no accounts)
+
+Requires Python 3.10 or newer. There's nothing to install.
 
 ```bash
+git clone https://github.com/DAWERE4/heatcheck.git
+cd heatcheck
 cp .env.example .env        # Windows: copy .env.example .env
 python3 server.py           # Windows: py server.py
 ```
 
-Open **http://localhost:8000/dashboard** and, in another tab, **http://localhost:8000/sensor**.
+Open **http://localhost:8000/dashboard** and **http://localhost:8000/sensor**.
 
-On the sensor page, tap **Heat wave**. In about 10 seconds the dashboard turns red and says **Calling now**. Click **No answer**, and the status changes to **Neighbor alerted**. Tap **Cool down** and after a few readings it goes back to **Normal**.
-
-Check the tests pass: `python3 -m unittest discover -s tests -t . -v`
-
-**Commit.**
+On the sensor page, tap **Heat wave**. About 10 seconds later the dashboard turns red and starts a (simulated) check-in call. Click **No answer** and the status changes to **Neighbor alerted**.
 
 ---
 
-## Notification Simulation:
+## Going live
 
-1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-username-7391`.
-2. Restart the server (Ctrl+C, then `python3 server.py`) and repeat the Heat wave → No answer test. Your phone gets an urgent notification with the address, heat index and nearest open cooling spot.
+Each part is optional and works on its own. After editing `.env`, restart the server.
 
----
+### 1. Neighbor alerts (ntfy, free)
+1. Install the **ntfy** app and subscribe to a hard-to-guess topic. Anyone who knows the name can read it.
+2. In `.env`: `NTFY_TOPIC=your-topic-name`
 
-## Live outdoor weather
+### 2. Natural voice (ElevenLabs, free plan works)
+1. Create an API key at elevenlabs.io with **Text to Speech** allowed.
+2. In `.env`: `ELEVENLABS_API_KEY=...`
+3. Click **▶ Hear the call** on the dashboard to check it. This works without Twilio.
 
-The dashboard's **Outside now** card shows the real heat index where the resident lives, from [Open-Meteo](https://open-meteo.com/) (free, no key), plus the hottest hour coming up in the next 18 hours. It refreshes every 10 minutes (or click **Refresh**).
-
-If no indoor sensor has sent a reading for 5 minutes, check-ins use this outdoor heat index instead. The call and the neighbor alert then say it's the heat *outside*, because a house without AC can be hotter than that. As soon as the sensor page sends again, the indoor reading takes over.
-
-Settings in `.env`: `WEATHER=false` turns it off, `WEATHER_REFRESH_MINUTES` and `SENSOR_STALE_MINUTES` change the timing.
-
----
-
-## Natural voice (ElevenLabs)
-
-The check-in call speaks in a warm, natural ElevenLabs voice instead of Twilio's robotic one. That matters when you're calling an 80-year-old who has learned to hang up on robocalls.
-
-1. Make a free ElevenLabs account, create an API key (allow **Text to Speech**), and add it to `.env`: `ELEVENLABS_API_KEY=...`
-2. Restart the server. The header badge says **ElevenLabs voice**.
-3. Click **▶ Hear the call** on the dashboard to hear the opening line in your browser. This works even without Twilio.
-
-Each sentence is generated once with the fast `eleven_flash_v2_5` model and saved in `data/audio_cache/`, so repeat calls don't use credits. If ElevenLabs is down or the key is wrong, the call automatically uses Twilio's voice instead and the dashboard shows why.
-
-Optional in `.env`: `ELEVENLABS_VOICE_ID` (any voice from your ElevenLabs Voices page; default is "George") and `ELEVENLABS_SPEED=0.9` to speak a little slower.
-
----
-
-## Step 4: Real phone calls (20–30 min)
-
-1. **Twilio:** upgrade your account (trial accounts can only use Twilio's sample call scripts and can only call verified numbers). Buy one US number with **Voice**. Copy the Account SID, Auth Token and the number.
-2. **Tunnel:** in a second terminal, run:
-
+### 3. Real phone calls (Twilio + Cloudflare Tunnel)
+1. Upgrade your Twilio account (trial accounts can't use custom call scripts) and buy a US number with **Voice**.
+2. Install cloudflared (Windows: `winget install --id Cloudflare.cloudflared`, Mac: `brew install cloudflared`) and run:
    ```bash
    cloudflared tunnel --url http://127.0.0.1:8000
    ```
-
-   Copy the `https://something.trycloudflare.com` URL it prints. Leave this terminal open all day. The URL changes every time you restart cloudflared, so if you restart it, update `.env` and restart the server.
-3. Fill in `.env`:
-
+   Keep it open. Use `http://127.0.0.1`, not `localhost` or `https`. The URL changes each time you restart it.
+3. In `.env`:
    ```
-   PUBLIC_BASE_URL=https://something.trycloudflare.com
+   PUBLIC_BASE_URL=https://your-tunnel.trycloudflare.com
    TWILIO_ACCOUNT_SID=AC...
    TWILIO_AUTH_TOKEN=...
    TWILIO_FROM_NUMBER=+14045551234
-   RESIDENT_PHONE=+1YOURCELL
-   NEIGHBOR_PHONE=            # optional second phone
+   RESIDENT_PHONE=+1...        # the phone that gets the check-in
+   NEIGHBOR_PHONE=             # optional: also call the neighbor
    ```
+4. Restart. The server should print **Calls: LIVE**. Click **Start check-in now** to test.
 
-4. Restart the server. The banner should say **Calls: LIVE**.
-5. On the dashboard, click **Start check-in now**. Your phone rings. Press 1 and the status changes to "Said they're OK". Try again and don't answer; the neighbor gets alerted.
-
-You don't need to set a webhook on the number in the Twilio console. Each call carries its own URLs.
-
-**Commit.**
+**Demoing with one phone:** leave `NEIGHBOR_PHONE` blank. Save the Twilio number as a contact, and turn off Focus / Do Not Disturb and "Silence Unknown Callers," or the call goes straight to voicemail.
 
 ---
 
-## Hardware (future work)
+## Using it
 
-We didn't have an ESP32 at HackGT, so there's no firmware in this repo. The server already accepts readings from any sensor: `POST /api/readings` with `{"home_id": "demo", "temp_f": 91, "humidity": 55}`. Next step is a cheap Wi-Fi temperature/humidity sensor posting there every few seconds.
+| Dashboard control | What it does |
+|---|---|
+| **Start check-in now** | Calls the resident immediately |
+| **▶ Hear the call** | Plays the opening line in your browser |
+| **Call language** | Switches the resident's calls between English and Español |
+| **Open virtual sensor** | A phone-friendly slider page that sends readings like a real sensor |
+| **Reset** | Clears the alert and returns to Normal |
+| **Pressed 1 / Pressed 2 / No answer** | Shown during simulated calls (when Twilio isn't set up) |
+
+**Real sensors** can send readings with:
+```bash
+curl -X POST http://localhost:8000/api/readings -H "Content-Type: application/json" \
+  -d '{"home_id": "demo", "temp_f": 91, "humidity": 55}'
+```
+(`temp_c` also works. If `DEVICE_KEY` is set, include `"device_key"`.) If no sensor reports for 5 minutes, HeatCheck switches to live outdoor weather.
+
+**Residents** are in `data/homes.json` (phone numbers come from `.env`). **Cooling centers and their hours** are in `data/cooling_spots.json`. "Ms. Johnson" is a made-up demo persona.
 
 ---
 
-## Demo script (about 2.5 minutes)
+## Configuration (`.env`)
 
-1. **Open with one sentence:** "HeatCheck calls seniors who can't run AC when it gets dangerously hot, and gets a neighbor to their door if they don't answer."
-2. **The problem (about 30 seconds):**
-   - In the 2021 British Columbia heat dome, 98% of the 619 heat deaths happened indoors, 56% of the people lived alone, and two-thirds were 70 or older (BC Coroners Service review).
-   - In August, Atlanta City Council told the mayor's office to plan heat outreach to seniors and people without AC, including robocalls. This is that.
-   - Half of Atlanta's low-income households spend more than 10.2% of their income on energy, so many ration their AC.
-3. **Live demo:**
-   - Point at **Outside now**: that's today's real Atlanta weather. "With no sensor, this alone triggers the call."
-   - Click **▶ Hear the call** so the judge hears the voice Ms. Johnson would hear.
-   - "It isn't dangerous today, so here's a July afternoon." Let the judge click **Heat wave** on the sensor page.
-   - Hand the judge your phone. It rings with the check-in. Ask them not to press anything.
-   - About 25 seconds later the call gives up, and the neighbor alert pops up (keep ntfy.sh open in a laptop tab too, so everyone sees it).
-4. **Name a limitation before they ask:** "Outdoor weather is only a rough guide, because a house without AC can stay hotter than outside, which is why a sensor is the upgrade. It's not a medical device, and it needs the resident's consent and a real neighbor. Next step: a pilot with a senior center."
-
-**One phone?** Leave `NEIGHBOR_PHONE` blank so the no-answer only sends the push alert, not a second call to you.
-
-Ms. Johnson is a composite demo persona, not a real person.
+| Setting | Default | What it does |
+|---|---|---|
+| `NTFY_TOPIC` | none | ntfy topic for neighbor alerts |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `PUBLIC_BASE_URL` | none | All four are needed for real calls |
+| `RESIDENT_PHONE`, `NEIGHBOR_PHONE`, `NEIGHBOR_NAME` | none | Who gets called |
+| `RESIDENT_LANGUAGE` | `en` | Starting call language (`en` or `es`) |
+| `ELEVENLABS_API_KEY` | none | Turns on the natural voice |
+| `ELEVENLABS_VOICE_ID` / `ELEVENLABS_VOICE_ID_ES` | George / same | Voice for English / Spanish calls |
+| `ELEVENLABS_SPEED` | normal | e.g. `0.9` to speak slower |
+| `ALERT_HEAT_INDEX_F` | `90` | Heat index that triggers a check-in |
+| `ALERT_CONSECUTIVE_READINGS` | `2` | Hot readings in a row before calling |
+| `RECHECK_MINUTES` | `30` | Call again this long after "I'm okay" if still hot |
+| `WEATHER` | `true` | Live outdoor weather (Open-Meteo) |
+| `SENSOR_STALE_MINUTES` | `5` | Minutes without a sensor reading before switching to weather |
+| `SIMULATE_CALLS` | `false` | Never place real calls, even if Twilio is set up |
+| `SAMPLE_HOMES` | `true` | Show the sample homes in the sidebar |
+| `PORT` | `8000` | Server port |
 
 ---
 
@@ -140,51 +123,58 @@ Ms. Johnson is a composite demo persona, not a real person.
 
 | Problem | Fix |
 |---|---|
+| Tunnel URL shows **Bad Gateway** | Start the server in its own terminal, and start the tunnel with `http://127.0.0.1:8000` |
+| Call says "an application error has occurred" | `PUBLIC_BASE_URL` is out of date. Check the cloudflared window and Twilio Console → Monitor → Logs |
+| Phone never rings | Twilio account not upgraded, number lacks Voice, or phone not in `+1XXXXXXXXXX` format. The dashboard timeline shows Twilio's error |
+| Badge says **ElevenLabs voice (failing)** | Hover it for the reason, usually the key or its Text to Speech permission. Calls still work with Twilio's voice |
+| "Weather update failed" | Check your internet connection. Everything else keeps working |
 | `python3` not found on Windows | Use `py server.py` |
-| Mac: `CERTIFICATE_VERIFY_FAILED` on push or calls | You have the python.org Python. Run *Install Certificates.command* in `/Applications/Python 3.x/` |
-| Tunnel URL shows **Bad Gateway** | Start the server (`py server.py`) in its own terminal, and start the tunnel with `http://127.0.0.1:8000` (not `localhost`, not `https`) |
-| The call says "an application error has occurred" | `PUBLIC_BASE_URL` is wrong or out of date, or the server isn't running. Check the cloudflared terminal and Twilio Console → Monitor → Logs |
-| The phone never rings | Account not upgraded, number lacks Voice, or phone number isn't in `+1XXXXXXXXXX` format. The dashboard timeline shows Twilio's error message |
-| Port already in use | Set `PORT=8001` in `.env` |
-| Sample homes are distracting | Set `SAMPLE_HOMES=false` |
-| Badge says "ElevenLabs voice (failing)" | Hover it to see why. Usually a wrong key or a key without Text to Speech permission. Calls still work with Twilio's voice |
-| "Weather update failed" on the dashboard | Check the laptop's internet. Everything else keeps working; `WEATHER=false` hides it |
-| The big number flips back to outdoor weather | The sensor page stopped sending for 5 minutes (closed tab or sleeping phone). Reopen it |
 
 ---
 
-## How the check-in works
+## Tests
 
-| Status | Meaning | What changes it |
-|---|---|---|
-| Normal | Nothing to do | Heat index ≥ threshold for 2 readings → **Calling** |
-| Calling now | Phone is ringing | 1 / "yes" → **OK**. 2 / "help", no answer, voicemail, busy, hang-up, or silence twice → **Neighbor alerted** |
-| Said they're OK | They answered | Still hot after 30 min → **Calling** again. Cooled down → **Normal** |
-| Neighbor alerted | Push alert (and call) sent | Cooled down → **Normal**, or Reset on the dashboard |
+```bash
+python3 -m unittest discover -s tests -t .
+```
+35 tests, including the full call flow against fake Twilio, weather and ElevenLabs servers.
 
-Heat index bands (National Weather Service): Caution 80–90°F, Extreme caution 90–103°F, Danger 103–124°F, Extreme danger 125°F+.
+## Project structure
 
-## Known limitations (good answers for "what breaks first?")
+```
+server.py                 web server (run this)
+app/engine.py             check-in logic: when to call, what to say, when to alert
+app/heat.py               NWS heat index
+app/weather.py            live weather + forecast peak (Open-Meteo)
+app/voice.py              ElevenLabs voice with caching and fallback
+app/cooling.py            which cooling center is open and closest
+app/services.py           Twilio calls + ntfy alerts
+app/twiml.py              phone call instructions (TwiML)
+app/static/               dashboard + virtual sensor pages
+data/                     residents and cooling centers
+tests/                    automated tests
+```
 
-- State is in memory, so restarting the server clears it. A real version needs a database.
-- Twilio webhook signatures aren't verified yet. Add that before any real use.
-- Speech replies use simple keyword matching (`classify_reply` in `app/engine.py`).
-- Cooling spot data is hand-entered. Verify the coordinates and add more places in `data/cooling_spots.json`.
-- Without a sensor, HeatCheck only knows the outdoor heat index. A house without AC can stay hotter than outside, especially at night.
+## Limitations and what's next
 
-## Stretch goals
+- Without a sensor it only knows the outdoor heat index, and a house without AC can be hotter inside, especially at night. Next step: a cheap Wi-Fi temperature sensor per home.
+- One alert threshold for everyone. For older adults with health problems, even 80°F can be dangerous, so per-person thresholds are next.
+- State is in memory (a restart clears it), and Twilio webhook signatures aren't verified yet. Both are needed before real use.
+- Next: a pilot with a senior center, more languages checked by native speakers, and morning calls when the forecast is dangerous.
 
-- Swap `classify_reply` for an LLM so "I feel a little dizzy" counts as help.
-- Call in the morning when the forecast peak (already on the dashboard) will be dangerous.
-- Spanish calls: set `RESIDENT_LANGUAGE=es`.
-- More residents: add entries to `data/homes.json`.
+## Built with
+
+Python · Twilio Voice · ElevenLabs · Open-Meteo · ntfy · Cloudflare Tunnel · HTML/CSS/JavaScript
+
+Built with help from Claude (an AI coding assistant), which wrote much of the code under my direction. I chose the problem and features, did the research, set up the services, and tested everything on real phones.
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0). Call voice by [ElevenLabs](https://elevenlabs.io/).
 
 ## Sources
 
-- City of Atlanta cooling center hours, June 30 2026: https://www.atlantaga.gov/Home/Components/News/News/15758
-- AJC, City Council extreme heat plan (Aug 2026): https://www.ajc.com/news/2026/08/under-fire-city-council-tells-mayors-office-to-craft-extreme-heat-plan/
+- NASA, Europe's Scorching Summer (Aug 2026): https://science.nasa.gov/earth/europes-scorching-summer/
+- BC Coroners Service heat dome review, via CBC: https://www.cbc.ca/news/canada/british-columbia/bc-heat-dome-coroners-report-1.6480026
 - ACEEE, Georgia energy burden: https://www.aceee.org/sites/default/files/pdf/fact-sheet/ses-georgia-100917.pdf
+- AJC, Atlanta City Council extreme heat plan (Aug 2026): https://www.ajc.com/news/2026/08/under-fire-city-council-tells-mayors-office-to-craft-extreme-heat-plan/
+- City of Atlanta, cooling center hours (June 2026): https://www.atlantaga.gov/Home/Components/News/News/15758
 - NWS heat index equation: https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
-- CBC on the BC Coroners Service heat dome review: https://www.cbc.ca/news/canada/british-columbia/bc-heat-dome-coroners-report-1.6480026
-- Weather data by Open-Meteo.com (CC BY 4.0): https://open-meteo.com/
-- Call voice by ElevenLabs: https://elevenlabs.io/

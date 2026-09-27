@@ -99,7 +99,7 @@ class FakeCloud:
         self.server.server_close()
 
 
-def settings_for(cloud, simulate=False, device_key="", elevenlabs_key="", audio_dir=""):
+def settings_for(cloud, simulate=False, device_key="", elevenlabs_key="", audio_dir="", voice_es=""):
     return Settings(
         port=0,
         public_base_url="https://example.trycloudflare.com",
@@ -118,6 +118,7 @@ def settings_for(cloud, simulate=False, device_key="", elevenlabs_key="", audio_
         weather_api_base=cloud.base,
         elevenlabs_key=elevenlabs_key,
         elevenlabs_api_base=cloud.base,
+        elevenlabs_voice_id_es=voice_es,
         audio_dir=audio_dir,
     )
 
@@ -488,6 +489,62 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(self.app.get("/audio/0123456789abcdef.mp3")[0], 404)
         self.assertEqual(self.app.get("/audio/../../server.py")[0], 404)
         self.assertEqual(self.app.get("/audio/xyz.mp3")[0], 404)
+
+
+class LanguageTests(unittest.TestCase):
+    def setUp(self):
+        self.cloud = FakeCloud()
+        self.audio_dir = tempfile.mkdtemp(prefix="heatcheck-audio-")
+        self.app = AppClient(settings_for(self.cloud, elevenlabs_key="sk_test", audio_dir=self.audio_dir,
+                                          voice_es="SpanishVoice123"))
+
+    def tearDown(self):
+        self.app.stop()
+        self.cloud.stop()
+        shutil.rmtree(self.audio_dir, ignore_errors=True)
+
+    def test_switch_to_spanish_and_back(self):
+        status, data = self.app.post_json("/api/homes/demo/language", {"language": "es"})
+        self.assertEqual(status, 200)
+        state = json.loads(self.app.get("/api/state")[1])
+        demo = next(h for h in state["homes"] if h["id"] == "demo")
+        self.assertEqual(demo["language"], "es")
+        self.assertEqual(state["languages"]["es"], "Español")
+        self.assertTrue(any("Español" in e["text"] for e in demo["events"]))
+
+        status, data = self.app.post_json("/api/homes/demo/preview")
+        self.assertTrue(data["text"].startswith("Hola, Ms. Johnson"))
+        self.assertIn("/text-to-speech/SpanishVoice123", self.cloud.tts[-1]["path"], "Spanish uses its own voice")
+
+        self.app.post_json("/api/homes/demo/language", {"language": "en"})
+        status, data = self.app.post_json("/api/homes/demo/preview")
+        self.assertTrue(data["text"].startswith("Hello, Ms. Johnson"))
+        self.assertIn("/text-to-speech/JBFqnCBsd6RMkjVDRZzb", self.cloud.tts[-1]["path"])
+
+    def test_spanish_call(self):
+        self.app.post_json("/api/homes/demo/language", {"language": "es"})
+        self.app.reading(94, 55)
+        self.app.reading(94, 55)
+        status, xml = self.app.post_form("/twilio/voice?home_id=demo&attempt=1", {"AnsweredBy": "human"})
+        self.assertIn('language="es-US"', xml, "listens for Spanish")
+        self.assertIn("<Play>", xml)
+        status, xml = self.app.post_form("/twilio/gather?home_id=demo&attempt=1", {"SpeechResult": "sí, estoy bien"})
+        self.assertEqual(self.app.home.status, "ok")
+        self.assertIn("Gracias", self.cloud.tts[-1]["body"]["text"])
+
+    def test_neighbor_call_stays_english(self):
+        self.app.post_json("/api/homes/demo/language", {"language": "es"})
+        self.app.reading(94, 55)
+        self.app.reading(94, 55)
+        self.app.post_form("/twilio/status?home_id=demo&leg=resident", {"CallStatus": "no-answer"})
+        status, xml = self.app.post_form("/twilio/neighbor?home_id=demo")
+        self.assertIn("/text-to-speech/JBFqnCBsd6RMkjVDRZzb", self.cloud.tts[-1]["path"])
+        self.assertIn("This is HeatCheck", self.cloud.tts[-1]["body"]["text"])
+
+    def test_unknown_language_rejected(self):
+        status, data = self.app.post_json("/api/homes/demo/language", {"language": "klingon"})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.app.home.language, "en")
 
 
 class BadRequestTests(unittest.TestCase):
