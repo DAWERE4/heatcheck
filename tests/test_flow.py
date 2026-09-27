@@ -18,16 +18,42 @@ from app.config import Settings  # noqa: E402
 from server import build  # noqa: E402
 
 
+def open_meteo_payload(temp_f=76.0, humidity=50, hourly_temps=None, hourly_hums=None,
+                       now="2026-09-27T13:15"):
+    """A response shaped like Open-Meteo's /v1/forecast."""
+    day = now[:10]
+    times = [f"{day}T{h:02d}:00" for h in range(24)]
+    temps = hourly_temps or [70 + (h if h <= 15 else 30 - h) for h in range(24)]
+    hums = hourly_hums or [55] * 24
+    return {
+        "latitude": 33.73, "longitude": -84.4, "timezone": "America/New_York",
+        "current_units": {"temperature_2m": "°F", "relative_humidity_2m": "%"},
+        "current": {"time": now, "interval": 900, "temperature_2m": temp_f, "relative_humidity_2m": humidity},
+        "hourly": {"time": times, "temperature_2m": temps, "relative_humidity_2m": hums},
+    }
+
+
 class FakeCloud:
-    """Pretends to be both Twilio's REST API and ntfy.sh, and records requests."""
+    """Pretends to be Twilio's REST API, ntfy.sh and Open-Meteo, and records requests."""
 
     def __init__(self):
-        self.calls, self.pushes = [], []
+        self.calls, self.pushes, self.weather_requests = [], [], []
+        self.weather = open_meteo_payload()
+        self.weather_status = 200
         cloud = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def do_GET(self):
+                cloud.weather_requests.append(self.path)
+                payload = json.dumps(cloud.weather).encode()
+                self.send_response(cloud.weather_status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
@@ -69,6 +95,7 @@ def settings_for(cloud, simulate=False, device_key=""):
         device_key=device_key,
         force_simulate=simulate,
         sample_homes=True,
+        weather_api_base=cloud.base,
     )
 
 
@@ -265,6 +292,104 @@ class SimulatedFlowTests(unittest.TestCase):
         self.assertEqual(self.app.home.status, "calling")
         self.app.post_json("/api/homes/demo/simulate", {"outcome": "ok"})
         self.assertEqual(self.app.home.status, "ok")
+
+
+class WeatherTests(unittest.TestCase):
+    def setUp(self):
+        self.cloud = FakeCloud()
+        self.app = AppClient(settings_for(self.cloud))
+
+    def tearDown(self):
+        self.app.stop()
+        self.cloud.stop()
+
+    def refresh(self):
+        status, data = self.app.post_json("/api/weather/refresh")
+        self.assertEqual(status, 200)
+
+    def test_request_and_display(self):
+        self.refresh()
+        self.assertEqual(len(self.cloud.weather_requests), 1, "one fetch shared by nearby homes")
+        query = self.cloud.weather_requests[0]
+        self.assertTrue(query.startswith("/v1/forecast?"))
+        self.assertIn("temperature_unit=fahrenheit", query)
+        self.assertIn("current=temperature_2m%2Crelative_humidity_2m", query)
+
+        state = json.loads(self.app.get("/api/state")[1])
+        demo = next(h for h in state["homes"] if h["id"] == "demo")
+        self.assertEqual(demo["weather"]["temp_f"], 76.0)
+        self.assertEqual(demo["weather"]["category"], "Normal")
+        peak = demo["weather"]["peak"]
+        self.assertEqual(peak["time"], "2026-09-27T15:00", "hottest upcoming hour")
+        self.assertEqual(peak["label"], "3 PM")
+        self.assertTrue(state["weather_enabled"])
+        sample = next(h for h in state["homes"] if h["sample"])
+        self.assertIsNone(sample["weather"], "sample homes keep their fake data")
+
+    def test_peak_is_now_when_it_is_already_hottest(self):
+        self.cloud.weather = open_meteo_payload(temp_f=96, humidity=55)
+        self.refresh()
+        peak = self.app.home.weather["peak"]
+        self.assertEqual(peak["label"], "now")
+        self.assertEqual(peak["hi"], self.app.home.weather["hi"])
+
+    def test_no_sensor_so_weather_triggers_checkin(self):
+        self.cloud.weather = open_meteo_payload(temp_f=96, humidity=55)
+        self.refresh()
+        self.assertEqual(self.app.home.last_source, "weather")
+        self.assertEqual(self.app.home.status, "normal", "needs 2 hot readings in a row")
+        self.refresh()
+        self.assertEqual(self.app.home.status, "calling")
+        self.assertIn("Outdoor heat index", self.app.home.reason)
+        self.assertEqual(len(self.cloud.calls), 1)
+
+        status, xml = self.app.post_form("/twilio/voice?home_id=demo&attempt=1", {"AnsweredBy": "human"})
+        self.assertIn("dangerously hot outside today", xml)
+        self.assertNotIn("inside your home", xml)
+
+        self.app.post_form("/twilio/status?home_id=demo&leg=resident", {"CallStatus": "no-answer"})
+        self.assertEqual(self.app.home.status, "escalated")
+        self.assertIn("Outdoor heat index (no indoor sensor)", self.cloud.pushes[0]["message"])
+        status, xml = self.app.post_form("/twilio/neighbor?home_id=demo")
+        self.assertIn("The heat index outside is about", xml)
+
+    def test_fresh_sensor_beats_weather(self):
+        self.app.reading(76, 50)
+        self.cloud.weather = open_meteo_payload(temp_f=96, humidity=55)
+        self.refresh()
+        self.refresh()
+        self.assertEqual(self.app.home.status, "normal")
+        self.assertNotEqual(self.app.home.last_source, "weather")
+        self.assertEqual(self.app.home.weather["temp_f"], 96.0, "still shown on the dashboard")
+
+        self.app.reading(94, 55)
+        self.app.reading(94, 55)
+        status, xml = self.app.post_form("/twilio/voice?home_id=demo&attempt=1", {"AnsweredBy": "human"})
+        self.assertIn("inside your home", xml)
+
+    def test_stale_sensor_falls_back_to_weather(self):
+        self.app.reading(76, 50)
+        self.app.home.last_sensor_at -= 10 * 60  # sensor went quiet 10 minutes ago
+        self.refresh()
+        self.assertEqual(self.app.home.last_source, "weather")
+
+    def test_weather_outage_is_reported_once(self):
+        self.cloud.weather_status = 503
+        self.refresh()
+        self.refresh()
+        self.assertIn("HTTP 503", self.app.home.weather_error)
+        errors = [e for e in self.app.home.events if "Weather update failed" in e["text"]]
+        self.assertEqual(len(errors), 1, "don't spam the timeline")
+        self.assertEqual(self.app.home.status, "normal")
+
+        self.cloud.weather_status = 200
+        self.refresh()
+        self.assertEqual(self.app.home.weather_error, "")
+
+    def test_bad_payload(self):
+        self.cloud.weather = {"error": True, "reason": "bad request"}
+        self.refresh()
+        self.assertIn("Unexpected weather data", self.app.home.weather_error)
 
 
 if __name__ == "__main__":

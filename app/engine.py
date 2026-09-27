@@ -7,6 +7,12 @@ Status flow for a home:
     calling --(pressed 2, no answer, voicemail, busy, hung up)--> escalated
     ok --(still hot after RECHECK_MINUTES)--> calling again
     ok / escalated --(cooled down for a few readings)--> normal
+
+Where readings come from:
+    - an indoor sensor (ESP32, or the virtual sensor page) when one is sending, or
+    - live outdoor weather (Open-Meteo) when no sensor has reported for
+      SENSOR_STALE_MINUTES. Outdoor heat is only a rough guide to indoor heat,
+      so the call script and alerts say "outside" when that's the source.
 """
 
 import random
@@ -19,6 +25,7 @@ from . import twiml
 from .cooling import local_now, nearest_open
 from .heat import category, heat_index_f
 from .services import ServiceError, ntfy_publish, twilio_create_call
+from .weather import WeatherError, fetch_weather
 
 CALL_WATCHDOG_SECONDS = 120  # if a call never reports back, escalate anyway
 COOL_DOWN_MARGIN_F = 4.0     # must drop this far below the threshold to reset
@@ -67,6 +74,8 @@ class Engine:
         self.spots = spots
         self.now_fn = now_fn
         self.run_async = run_async
+        self.weather_fetch = fetch_weather  # swapped out in tests
+        self.weather_checked_at = 0.0
 
     # ---------- helpers ----------
 
@@ -108,6 +117,8 @@ class Engine:
         with self.store.lock:
             home.readings.append(reading)
             home.last_source = source
+            if source != "weather":
+                home.last_sensor_at = reading["t"]
             if home.sample:
                 return reading
             if hi >= threshold:
@@ -128,7 +139,8 @@ class Engine:
                 action = "cooled"
 
         if action == "checkin":
-            self.start_checkin(home, f"Heat index hit {hi:.0f}°F ({cat['label']})")
+            where = "Outdoor heat index (no indoor sensor)" if source == "weather" else "Heat index"
+            self.start_checkin(home, f"{where} hit {hi:.0f}°F ({cat['label']})")
         elif action == "cooled":
             self.store.set_status(home, "normal")
             self.store.add_event(home, f"Cooled down to {hi:.0f}°F. Back to normal.", "good")
@@ -167,21 +179,37 @@ class Engine:
             self.store.add_event(home, f"Couldn't place the call. {err}", "error")
             self.escalate(home, "couldn't be reached because the check-in call failed")
 
-    def prompt_text(self, home, attempt: int) -> str:
+    def heat_sentence(self, home) -> str:
+        """One sentence about how hot it is, honest about whether we measured inside."""
         hi = self.last_hi(home)
+        if home.language == "es":
+            if home.using_weather:
+                return (
+                    f"Hoy hace un calor peligroso afuera, un índice de calor de unos {hi} grados. "
+                    "Una casa sin aire acondicionado puede estar aún más caliente por dentro."
+                )
+            return f"Está haciendo un calor peligroso dentro de su casa, unos {hi} grados."
+        if home.using_weather:
+            return (
+                f"It is dangerously hot outside today, a heat index of about {hi} degrees. "
+                "A home without air conditioning can get even hotter inside."
+            )
+        return f"It is getting dangerously hot inside your home, about {hi} degrees."
+
+    def prompt_text(self, home, attempt: int) -> str:
         if home.language == "es":
             if attempt > 1:
                 return "Perdón, no le entendí. Si está bien, oprima 1. Si necesita ayuda, oprima 2."
             return (
                 f"Hola, {home.name}. Le habla HeatCheck, su llamada de seguridad por el calor. "
-                f"Está haciendo un calor peligroso dentro de su casa, unos {hi} grados. "
+                f"{self.heat_sentence(home)} "
                 "Si está bien, oprima 1 o diga sí. Si necesita ayuda, oprima 2 o diga ayuda."
             )
         if attempt > 1:
             return "Sorry, I didn't catch that. If you are okay, press 1. If you need help, press 2."
         return (
             f"Hello, {home.name}. This is HeatCheck, your heat safety check. "
-            f"It is getting dangerously hot inside your home, about {hi} degrees. "
+            f"{self.heat_sentence(home)} "
             "If you are okay, press 1 or say yes. If you need help, press 2 or say help."
         )
 
@@ -222,11 +250,11 @@ class Engine:
     def voicemail_text(self, home) -> str:
         if home.language == "es":
             return (
-                f"Hola, {home.name}. Le habla HeatCheck. Está haciendo un calor peligroso en su casa. "
+                f"Hola, {home.name}. Le habla HeatCheck. {self.heat_sentence(home)} "
                 "Tome agua y busque un lugar fresco. Vamos a pedirle a alguien que venga a verle."
             )
         return (
-            f"Hello, {home.name}. This is HeatCheck. It is getting dangerously hot inside your home. "
+            f"Hello, {home.name}. This is HeatCheck. {self.heat_sentence(home)} "
             "Please drink water and get somewhere cool. We are asking someone to come check on you."
         )
 
@@ -293,9 +321,10 @@ class Engine:
 
     def neighbor_twiml(self, home) -> str:
         hi = self.last_hi(home)
+        where = "outside" if home.using_weather else "inside their home"
         message = (
             f"This is HeatCheck. {home.name}, at {home.address}, {home.reason}. "
-            f"The heat index inside their home is about {hi} degrees. "
+            f"The heat index {where} is about {hi} degrees. "
             "Please go check on them now. If they are confused or not sweating, call 9 1 1. "
             "Details were sent to your phone."
         )
@@ -338,7 +367,8 @@ class Engine:
                     title=f"HeatCheck: please check on {home.name} now",
                     message=(
                         f"{home.name} ({home.address}) {reason}.\n"
-                        f"Indoor heat index: {hi}°F ({cat}).\n{spot_line}\n"
+                        f"{'Outdoor heat index (no indoor sensor)' if home.using_weather else 'Indoor heat index'}: "
+                        f"{hi}°F ({cat}).\n{spot_line}\n"
                         "If they're confused, dizzy or not sweating, call 911."
                     ),
                     priority=5,
@@ -390,6 +420,41 @@ class Engine:
             return False
         return True
 
+    # ---------- outdoor weather ----------
+
+    def sensor_is_stale(self, home, now: float = None) -> bool:
+        now = now or time.time()
+        return now - home.last_sensor_at > self.settings.sensor_stale_minutes * 60
+
+    def refresh_weather(self) -> None:
+        """Fetch outdoor weather for each home. Homes with no recent sensor reading
+        get the outdoor heat index as their reading, which can trigger a check-in."""
+        if not self.settings.weather_enabled:
+            return
+        self.weather_checked_at = time.time()
+        cache = {}
+        for home in list(self.store.homes.values()):
+            if home.sample:
+                continue
+            key = (round(home.lat, 2), round(home.lon, 2))
+            if key not in cache:
+                try:
+                    cache[key] = self.weather_fetch(self.settings, home.lat, home.lon)
+                except WeatherError as err:
+                    cache[key] = err
+            result = cache[key]
+            if isinstance(result, WeatherError):
+                if home.weather_error != str(result):
+                    self.store.add_event(home, f"Weather update failed. {result}", "error")
+                home.weather_error = str(result)
+                continue
+            if home.weather_error:
+                self.store.add_event(home, "Weather updates are working again.", "info")
+            home.weather_error = ""
+            home.weather = result
+            if self.sensor_is_stale(home):
+                self.add_reading(home, result["temp_f"], result["humidity"], source="weather")
+
     # ---------- background tick ----------
 
     def tick(self) -> None:
@@ -419,6 +484,9 @@ class Engine:
             "threshold_f": s.alert_heat_index_f,
             "recheck_minutes": s.recheck_minutes,
             "push_alerts": bool(s.ntfy_topic),
+            "weather_enabled": s.weather_enabled,
+            "weather_refresh_minutes": s.weather_refresh_minutes,
+            "sensor_stale_minutes": s.sensor_stale_minutes,
             "now": time.time(),
             "homes": homes,
         }

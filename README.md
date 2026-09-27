@@ -1,10 +1,11 @@
 # HeatCheck
 
-**HeatCheck watches the indoor heat in the homes of seniors who can't run AC, calls them when it gets dangerous, and gets a neighbor to their door if they don't answer.**
+**HeatCheck calls seniors who can't run AC when it gets dangerously hot, and gets a neighbor to their door if they don't answer. It works from live weather with nothing but a phone number, and an indoor sensor makes it precise.**
 
 ```
-sensor (ESP32 or phone slider)
-   → server computes the heat index (National Weather Service formula)
+indoor sensor (phone slider for now)            ─┐
+live outdoor weather (Open-Meteo), used when     ├→ server computes the heat index (National Weather Service formula)
+  no sensor has reported for 5 minutes          ─┘
    → heat index over 90°F twice in a row → phone call: "Press 1 if you're OK, 2 if you need help"
         pressed 1 / said "yes"   → cooling tips + nearest cooling spot open right now, call again in 30 min
         pressed 2 / no answer / voicemail / hung up → push alert (and call) to a neighbor
@@ -17,14 +18,14 @@ heatcheck/
 │   ├── engine.py              ← the check-in logic (start reading here)
 │   ├── heat.py                ← NWS heat index + categories
 │   ├── cooling.py             ← which cooling spot is open now, and closest
+│   ├── weather.py             ← live outdoor weather + forecast peak (Open-Meteo)
 │   ├── services.py            ← Twilio calls + ntfy push alerts
 │   ├── twiml.py               ← what the phone call says
 │   ├── store.py, config.py
 │   └── static/dashboard.html, sensor.html
 ├── data/homes.json            ← residents (phones come from .env)
 ├── data/cooling_spots.json    ← cooling centers + hours
-├── firmware/heatcheck_esp32/  ← Arduino sketch for ESP32 + DHT22
-└── tests/                     ← 17 tests, including the full call flow against fake Twilio
+└── tests/                     ← 24 tests, including the full call flow against fake Twilio and fake weather
 ```
 
 ---
@@ -50,6 +51,16 @@ Check the tests pass: `python3 -m unittest discover -s tests -t . -v`
 
 1. Install the **ntfy** app and subscribe to a hard-to-guess topic, like `heatcheck-dawere4-7391`.
 2. Restart the server (Ctrl+C, then `python3 server.py`) and repeat the Heat wave → No answer test. Your phone gets an urgent notification with the address, heat index and nearest open cooling spot.
+
+---
+
+## Live outdoor weather
+
+The dashboard's **Outside now** card shows the real heat index where the resident lives, from [Open-Meteo](https://open-meteo.com/) (free, no key), plus the hottest hour coming up in the next 18 hours. It refreshes every 10 minutes (or click **Refresh**).
+
+If no indoor sensor has sent a reading for 5 minutes, check-ins use this outdoor heat index instead. The call and the neighbor alert then say it's the heat *outside*, because a house without AC can be hotter than that. As soon as the sensor page sends again, the indoor reading takes over.
+
+Settings in `.env`: `WEATHER=false` turns it off, `WEATHER_REFRESH_MINUTES` and `SENSOR_STALE_MINUTES` change the timing.
 
 ---
 
@@ -83,34 +94,27 @@ You don't need to set a webhook on the number in the Twilio console. Each call c
 
 ---
 
-## Step 5: ESP32 sensor (optional, 30–60 min)
+## Hardware (future work)
 
-You need an ESP32 dev board, a DHT22 (or DHT11) sensor, 3 jumper wires and a USB cable.
-
-1. Wire it: sensor **+** → 3V3, **−** → GND, **OUT** → GPIO 4.
-2. In the Arduino IDE:
-   - Boards Manager: install **esp32** by Espressif.
-   - Library Manager: install **DHT sensor library** by Adafruit (and **Adafruit Unified Sensor** when it asks).
-3. Open `firmware/heatcheck_esp32/heatcheck_esp32.ino` and set:
-   - `WIFI_SSID` / `WIFI_PASS`: use your **phone's hotspot**, because the ESP32 can't log in to eduroam. On iPhone, turn on *Maximize Compatibility* so it's 2.4 GHz.
-   - `SERVER_URL`: your trycloudflare URL.
-4. Upload, then open the Serial Monitor at 115200 baud. You should see `-> HTTP 200` every 3 seconds, and the dashboard shows "from ESP32 sensor".
-5. **Demo:** warm the sensor gently with a hairdryer from about a foot away. Hot air is dry, so the heat index climbs a bit slower than the temperature. If it won't cross 90, set `ALERT_HEAT_INDEX_F=85` for the demo.
+We didn't have an ESP32 at HackGT, so there's no firmware in this repo. The server already accepts readings from any sensor: `POST /api/readings` with `{"home_id": "demo", "temp_f": 91, "humidity": 55}`. Next step is a cheap Wi-Fi temperature/humidity sensor posting there every few seconds.
 
 ---
 
 ## Demo script (about 2.5 minutes)
 
-1. **Open with one sentence:** "HeatCheck watches the indoor heat in the homes of seniors who can't run AC, calls them when it gets dangerous, and gets a neighbor to their door if they don't answer."
+1. **Open with one sentence:** "HeatCheck calls seniors who can't run AC when it gets dangerously hot, and gets a neighbor to their door if they don't answer."
 2. **The problem (about 30 seconds):**
+   - In the 2021 British Columbia heat dome, 98% of the 619 heat deaths happened indoors, 56% of the people lived alone, and two-thirds were 70 or older (BC Coroners Service review).
    - In August, Atlanta City Council told the mayor's office to plan heat outreach to seniors and people without AC, including robocalls. This is that.
-   - During July's heat wave, the city's cooling center was open weekdays 11am to 6pm only.
    - Half of Atlanta's low-income households spend more than 10.2% of their income on energy, so many ration their AC.
 3. **Live demo:**
-   - Hairdryer on the sensor (or Heat wave on the slider), and the dashboard turns red.
-   - Hand the judge the "resident" phone. It rings, and they hear the check-in.
-   - Ask them not to press anything. The neighbor's phone buzzes with the address and the nearest open cooling spot.
-4. **Name a limitation before they ask:** "It's not a medical device, and it only works with the resident's consent and a real network of neighbors. Our next step is a pilot with a senior center."
+   - Point at **Outside now**: that's today's real Atlanta weather. "With no sensor, this alone triggers the call."
+   - "It isn't dangerous today, so here's a July afternoon." Let the judge click **Heat wave** on the sensor page.
+   - Hand the judge your phone. It rings with the check-in. Ask them not to press anything.
+   - About 25 seconds later the call gives up, and the neighbor alert pops up (keep ntfy.sh open in a laptop tab too, so everyone sees it).
+4. **Name a limitation before they ask:** "Outdoor weather is only a rough guide, because a house without AC can stay hotter than outside, which is why a sensor is the upgrade. It's not a medical device, and it needs the resident's consent and a real neighbor. Next step: a pilot with a senior center."
+
+**One phone?** Leave `NEIGHBOR_PHONE` blank so the no-answer only sends the push alert, not a second call to you.
 
 Ms. Johnson is a composite demo persona, not a real person.
 
@@ -124,9 +128,10 @@ Ms. Johnson is a composite demo persona, not a real person.
 | Mac: `CERTIFICATE_VERIFY_FAILED` on push or calls | You have the python.org Python. Run *Install Certificates.command* in `/Applications/Python 3.x/` |
 | The call says "an application error has occurred" | `PUBLIC_BASE_URL` is wrong or out of date, or the server isn't running. Check the cloudflared terminal and Twilio Console → Monitor → Logs |
 | The phone never rings | Account not upgraded, number lacks Voice, or phone number isn't in `+1XXXXXXXXXX` format. The dashboard timeline shows Twilio's error message |
-| ESP32 prints `HTTP -1` | Wrong `SERVER_URL` or Wi-Fi. The hotspot must be 2.4 GHz |
 | Port already in use | Set `PORT=8001` in `.env` |
 | Sample homes are distracting | Set `SAMPLE_HOMES=false` |
+| "Weather update failed" on the dashboard | Check the laptop's internet. Everything else keeps working; `WEATHER=false` hides it |
+| The big number flips back to outdoor weather | The sensor page stopped sending for 5 minutes (closed tab or sleeping phone). Reopen it |
 
 ---
 
@@ -147,11 +152,12 @@ Heat index bands (National Weather Service): Caution 80–90°F, Extreme caution
 - Twilio webhook signatures aren't verified yet. Add that before any real use.
 - Speech replies use simple keyword matching (`classify_reply` in `app/engine.py`).
 - Cooling spot data is hand-entered. Verify the coordinates and add more places in `data/cooling_spots.json`.
+- Without a sensor, HeatCheck only knows the outdoor heat index. A house without AC can stay hotter than outside, especially at night.
 
 ## Stretch goals
 
 - Swap `classify_reply` for an LLM so "I feel a little dizzy" counts as help.
-- Call in the morning when the National Weather Service forecast says tonight won't cool down.
+- Call in the morning when the forecast peak (already on the dashboard) will be dangerous.
 - Spanish calls: set `RESIDENT_LANGUAGE=es`.
 - More residents: add entries to `data/homes.json`.
 
@@ -161,3 +167,5 @@ Heat index bands (National Weather Service): Caution 80–90°F, Extreme caution
 - AJC, City Council extreme heat plan (Aug 2026): https://www.ajc.com/news/2026/08/under-fire-city-council-tells-mayors-office-to-craft-extreme-heat-plan/
 - ACEEE, Georgia energy burden: https://www.aceee.org/sites/default/files/pdf/fact-sheet/ses-georgia-100917.pdf
 - NWS heat index equation: https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
+- CBC on the BC Coroners Service heat dome review: https://www.cbc.ca/news/canada/british-columbia/bc-heat-dome-coroners-report-1.6480026
+- Weather data by Open-Meteo.com (CC BY 4.0): https://open-meteo.com/

@@ -106,6 +106,16 @@
   .tag { font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; margin-left: 6px; }
   .panel p { margin: 0; font-size: 14px; color: var(--muted); }
   .panel p + p { margin-top: 8px; }
+  .outside-top { display: flex; align-items: baseline; gap: 10px; }
+  .outside-top .big { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .outside-top .lbl { font-weight: 700; font-size: 14px; }
+  .outside .meta { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .outside .peak { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 14px; color: var(--ink); }
+  .outside .peak b { font-variant-numeric: tabular-nums; }
+  .outside .foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .outside .foot a { color: var(--muted); }
+  .outside .foot button { font-size: 12px; padding: 4px 10px; }
+  .outside .err { margin-top: 8px; font-size: 13px; color: var(--extreme-danger); }
   .setup { font-size: 13px; color: var(--muted); }
   .setup code { background: var(--bg); padding: 1px 5px; border-radius: 5px; }
 </style>
@@ -134,7 +144,7 @@
 
     <div class="reading">
       <div class="hi-box" id="hibox">
-        <div class="label">Indoor heat index</div>
+        <div class="label" id="hi-label">Indoor heat index</div>
         <div class="num" id="hi">--</div>
         <div class="cat" id="cat">Waiting for sensor</div>
       </div>
@@ -169,6 +179,21 @@
   </section>
 
   <aside>
+    <section class="card panel outside" id="outside" hidden>
+      <h3>Outside now · <span id="out-where">Atlanta</span></h3>
+      <div class="outside-top">
+        <span class="big" id="out-hi">--</span>
+        <span class="lbl" id="out-cat"></span>
+      </div>
+      <div class="meta" id="out-meta">Loading live weather…</div>
+      <div class="peak" id="out-peak"></div>
+      <div class="meta" id="out-note"></div>
+      <div class="err" id="out-err" hidden></div>
+      <div class="foot">
+        <span>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a></span>
+        <button id="btn-weather">Refresh</button>
+      </div>
+    </section>
     <section class="card panel">
       <h3>Other homes <span class="tag">sample data</span></h3>
       <div id="others"><p>None.</p></div>
@@ -242,13 +267,15 @@ function render() {
   $("reason").textContent = home.status === "normal" ? "" : `${home.reason} · ${ago(home.status_since)}`;
 
   const last = home.last;
+  $("hi-label").textContent = home.using_weather ? "Outdoor heat index · no indoor sensor" : "Indoor heat index";
   if (last) {
     $("hi").textContent = Math.round(last.hi) + "°";
     $("cat").textContent = last.category;
     $("hibox").style.background = color(last.css);
-    const src = { esp32: "ESP32 sensor", virtual: "virtual sensor", sensor: "sensor" }[home.last_source] || home.last_source;
+    const src = { esp32: "ESP32 sensor", virtual: "virtual sensor", sensor: "sensor", weather: "live outdoor weather" }[home.last_source] || home.last_source;
     $("sub").textContent = `Air ${last.temp_f}°F · humidity ${Math.round(last.humidity)}% · from ${src} · ${ago(last.t)}`;
   }
+  renderOutside(home);
   spark(home.history, state.threshold_f);
 
   $("sim").style.display = home.status === "calling" && !home.calls_live ? "block" : "none";
@@ -283,6 +310,30 @@ function render() {
   }
 }
 
+function renderOutside(home) {
+  const card = $("outside");
+  card.hidden = !state.weather_enabled;
+  if (!state.weather_enabled) return;
+  $("out-where").textContent = (home.neighborhood || "Atlanta").split(",").pop().trim() || "Atlanta";
+  const w = home.weather;
+  if (w) {
+    $("out-hi").textContent = Math.round(w.hi) + "°";
+    $("out-hi").style.color = color(w.css);
+    $("out-cat").textContent = w.category;
+    $("out-meta").textContent = `Air ${w.temp_f}°F · humidity ${w.humidity}% · updated ${ago(w.fetched_at)}`;
+    $("out-peak").innerHTML = w.peak
+      ? `Peak in the next ${w.peak.hours} h: <b style="color:${color(w.peak.css)}">${Math.round(w.peak.hi)}°F</b> ${w.peak.label === "now" ? "right now" : "at " + esc(w.peak.label)} (${esc(w.peak.category)})`
+      : "";
+  }
+  if (!w) $("out-meta").textContent = "Waiting for live weather…";
+  $("out-note").textContent = home.using_weather
+    ? "No indoor sensor right now, so check-ins are using this outdoor reading."
+    : `If the indoor sensor stops for ${state.sensor_stale_minutes} min, check-ins switch to this outdoor reading.`;
+  const err = $("out-err");
+  err.hidden = !home.weather_error;
+  err.textContent = home.weather_error || "";
+}
+
 async function refresh() {
   try {
     const res = await fetch("/api/state", { cache: "no-store" });
@@ -301,6 +352,7 @@ async function post(path, body) {
 $("btn-checkin").onclick = () => post(`/api/homes/${DEMO_ID}/checkin`);
 $("btn-reset").onclick = () => post(`/api/homes/${DEMO_ID}/reset`);
 $("btn-sensor").onclick = () => window.open("/sensor", "_blank");
+$("btn-weather").onclick = () => post("/api/weather/refresh");
 document.querySelectorAll("#sim button").forEach((b) => {
   b.onclick = () => post(`/api/homes/${DEMO_ID}/simulate`, { outcome: b.dataset.outcome });
 });

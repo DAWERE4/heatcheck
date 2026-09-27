@@ -64,10 +64,18 @@ class Home:
     call_sid: str = ""
     checkins: int = 0
     last_source: str = ""
+    last_sensor_at: float = 0.0    # time of the last indoor (non-weather) reading
+    weather: dict = None           # latest outdoor weather for this home's location
+    weather_error: str = ""
 
     @property
     def first_name(self) -> str:
         return self.name
+
+    @property
+    def using_weather(self) -> bool:
+        """True when the latest reading came from outdoor weather, not an indoor sensor."""
+        return self.last_source == "weather"
 
     @property
     def last(self):
@@ -123,6 +131,9 @@ class Store:
             "checkins": home.checkins,
             "last": last,
             "last_source": home.last_source,
+            "using_weather": home.using_weather,
+            "weather": home.weather,
+            "weather_error": home.weather_error,
             "history": [round(r["hi"], 1) for r in list(home.readings)[-90:]],
             "events": list(home.events)[::-1],
         }

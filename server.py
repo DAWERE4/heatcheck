@@ -98,6 +98,9 @@ def make_handler(engine: Engine):
             path, query = self.route()
             if path == "/api/readings":
                 return self.post_reading()
+            if path == "/api/weather/refresh":
+                engine.refresh_weather()
+                return self.send_json({"ok": True})
             match = HOME_ACTION.match(path)
             if match:
                 return self.post_home_action(match.group(1), match.group(2))
@@ -191,6 +194,22 @@ def start_ticker(engine: Engine, every: float = 5.0) -> None:
     threading.Thread(target=loop, daemon=True).start()
 
 
+def start_weather_loop(engine: Engine) -> None:
+    """Fetch outdoor weather right away, then every WEATHER_REFRESH_MINUTES."""
+    if not engine.settings.weather_enabled:
+        return
+
+    def loop():
+        while True:
+            try:
+                engine.refresh_weather()
+            except Exception as err:  # never let the weather kill the server
+                print(f"weather error: {err}", flush=True)
+            time.sleep(engine.settings.weather_refresh_minutes * 60)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def lan_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -209,6 +228,7 @@ def main():
     server, engine = build()
     s = engine.settings
     start_ticker(engine)
+    start_weather_loop(engine)
     port = s.port
     print("\n  HeatCheck is running")
     print(f"  Dashboard:      http://localhost:{port}/dashboard")
@@ -219,6 +239,11 @@ def main():
         missing = ", ".join(s.missing_for_live()) or "SIMULATE_CALLS=true"
         print(f"  Calls: SIMULATED (missing: {missing})")
     print(f"  Push alerts: {'ntfy topic ' + s.ntfy_topic if s.ntfy_topic else 'OFF (set NTFY_TOPIC in .env)'}")
+    if s.weather_enabled:
+        print(f"  Weather: live from Open-Meteo every {s.weather_refresh_minutes:g} min "
+              f"(used when no sensor has reported for {s.sensor_stale_minutes:g} min)")
+    else:
+        print("  Weather: OFF (WEATHER=false)")
     print(f"  Alert when heat index >= {s.alert_heat_index_f:.0f}°F for {s.alert_consecutive} readings in a row\n")
     try:
         server.serve_forever()

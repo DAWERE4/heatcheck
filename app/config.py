@@ -59,6 +59,10 @@ class Settings:
     device_key: str
     force_simulate: bool
     sample_homes: bool
+    weather_enabled: bool = True
+    weather_api_base: str = "https://api.open-meteo.com"
+    weather_refresh_minutes: float = 10.0
+    sensor_stale_minutes: float = 5.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,6 +81,10 @@ class Settings:
             device_key=_env("DEVICE_KEY"),
             force_simulate=_env_bool("SIMULATE_CALLS"),
             sample_homes=_env("SAMPLE_HOMES", "true").lower() not in {"0", "false", "no", "off"},
+            weather_enabled=_env("WEATHER", "true").lower() not in {"0", "false", "no", "off"},
+            weather_api_base=_env("WEATHER_API_BASE", "https://api.open-meteo.com").rstrip("/"),
+            weather_refresh_minutes=max(1.0, _env_float("WEATHER_REFRESH_MINUTES", 10.0)),
+            sensor_stale_minutes=_env_float("SENSOR_STALE_MINUTES", 5.0),
         )
 
     @property
